@@ -34,6 +34,14 @@ const (
 type Token struct {
 	Type    TokenType
 	Literal string
+
+	// Unterminated is set on a REGEX token whose closing '/' was never found,
+	// so the pattern ran to the end of the input. The parser turns it into a
+	// notice; the lexer itself holds no notices and must not reach for the
+	// parser to say so. It travels on the token rather than on the Lexer
+	// because the parser reads one token ahead, so a flag on the lexer would
+	// have to be matched back up with the token that set it.
+	Unterminated bool
 }
 
 // Lexer scans the input string and produces tokens.
@@ -117,8 +125,23 @@ func (l *Lexer) scanIdentifier() Token {
 			break
 		}
 		if isSpecialSyntaxChar(ch) {
-			// Allow '/' in colon-filter values so path:pkg/search stays as one token
-			if ch == '/' && inFilterValue {
+			// A '/' opens a regex only at the START of a term. Inside one it is
+			// an ordinary character, so net/http, src/main.go and
+			// path:pkg/search are each a single token.
+			//
+			// scan() reaches its case '/' only at a token boundary — the start
+			// of the input, after whitespace, after '(' ')' ',' or an operator,
+			// or after a closing '"' — because every other scanner ends a token
+			// by unreading a special character, and this branch is the only
+			// place that used to unread a '/'. So not breaking here is exactly
+			// the term-start rule, with no position tracking needed.
+			//
+			// This was scoped to inFilterValue, which made path:pkg/search one
+			// token and left net/http lexing as KEYWORD(net) AND REGEX(/http/)
+			// — silently, because a space is a legal regex atom, so the swallowed
+			// text only ever announced itself when it happened to be invalid
+			// regex.
+			if ch == '/' {
 				sb.WriteRune(ch)
 				continue
 			}
@@ -276,8 +299,10 @@ func (l *Lexer) scanRegex() Token {
 		sb.WriteRune(ch)
 	}
 
-	// Unterminated regex, such as "/foo" with no closing delimiter.
-	return Token{Type: REGEX, Literal: sb.String()}
+	// Unterminated regex, such as "/foo" with no closing delimiter. The rest of
+	// the query became the pattern, which is a different question from the one
+	// that was asked, so the token says so and the parser reports it.
+	return Token{Type: REGEX, Literal: sb.String(), Unterminated: true}
 }
 
 func (l *Lexer) scanOperator() Token {

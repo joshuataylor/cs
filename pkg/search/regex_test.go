@@ -134,10 +134,19 @@ func TestInvalidRegexNotice(t *testing.T) {
 // TestValidRegexNoNotice makes sure the notice above is not emitted for patterns
 // that are fine, including the delimiter cases fixed in the lexer.
 func TestValidRegexNoNotice(t *testing.T) {
-	for _, query := range []string{`/health/`, `/_cluster\/health/`, `/_cluster[/]health/`, `/\/health/`, `/[]/]x/`, `/a\\/`, `/foo`} {
+	for _, query := range []string{`/health/`, `/_cluster\/health/`, `/_cluster[/]health/`, `/\/health/`, `/[]/]x/`, `/a\\/`} {
 		_, notices := NewParser(NewLexer(strings.NewReader(query))).ParseQuery()
 		if len(notices) != 0 {
 			t.Errorf("ParseQuery(%q) notices = %v, want none", query, notices)
 		}
+	}
+
+	// `/foo` is a valid pattern, so the invalid-regex notice must not fire. Its
+	// closing '/' is missing, though, and that is reported by a notice of its
+	// own: the rest of the query was read as the pattern, which is a different
+	// question from the one asked (TestAnUnterminatedRegexIsReported).
+	_, notices := NewParser(NewLexer(strings.NewReader(`/foo`))).ParseQuery()
+	if len(notices) != 1 || !strings.Contains(notices[0], "was not closed") {
+		t.Errorf("ParseQuery(%q) notices = %v, want only the not-closed notice", `/foo`, notices)
 	}
 }

@@ -170,6 +170,13 @@ func (p *Parser) parsePrefix() Node {
 		node = &PhraseNode{Value: p.tok.Literal}
 	case REGEX:
 		regexNode := &RegexNode{Pattern: p.tok.Literal}
+		// A regex with no closing '/' swallowed the rest of the query, and when
+		// the swallowed text happens to be a valid pattern — a space is a legal
+		// regex atom — nothing below would say so. Reported before the compile
+		// warning because it explains where the pattern came from.
+		if p.tok.Unterminated {
+			p.notices = append(p.notices, fmt.Sprintf("Notice: Regex /%s/ was not closed, so the rest of the query was read as the pattern.", p.tok.Literal))
+		}
 		// An uncompilable pattern matches nothing, which on its own is
 		// indistinguishable from the string genuinely not being in the code, so
 		// say why here rather than returning a clean empty result.
