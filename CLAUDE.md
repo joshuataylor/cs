@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**cs (codespelunker)** is a command-line code search tool written in Go. It searches files recursively using boolean queries, regex, and fuzzy matching, with relevance ranking (BM25/TF-IDF). Four modes: console output, interactive TUI, HTTP server, and MCP server.
+**cs (codespelunker)** is a command-line code search tool written in Go. It searches files recursively using boolean queries, regex, and fuzzy matching, with relevance ranking (BM25/TF-IDF). Four modes: console output, interactive TUI, HTTP server, and MCP server (stdio or Streamable HTTP).
 
 ## Build & Test Commands
 
@@ -50,7 +50,7 @@ See `pkg/search/README.md` for detailed query syntax documentation.
 
 ### Core Root Files
 
-- **`main.go`**: Cobra CLI entry point. Routes to `ConsoleSearch()`, TUI (`initialModel()`), `StartHttpServer()`, or `StartMcpServer()` based on flags/args
+- **`main.go`**: Cobra CLI entry point. Routes to `ConsoleSearch()`, TUI (`initialModel()`), `StartHttpServer()`, `StartMCPServer()` or `StartMCPHTTPServer()` based on flags/args
 - **`config.go`**: `Config` struct with all CLI-configurable fields. `DefaultConfig()` provides sensible defaults
 - **`search.go`**: `DoSearch()` — orchestrates the full search pipeline: file walking, reading, binary/minified filtering, AST evaluation, and result streaming via channels. Uses `SearchCache` for prefix-based caching
 - **`console.go`**: `ConsoleSearch()` — collects results, ranks, and outputs in text/JSON/vimgrep format
@@ -59,7 +59,8 @@ See `pkg/search/README.md` for detailed query syntax documentation.
 - **`cache.go`**: `SearchCache` — LRU cache with TTL for query results; supports prefix matching for progressive refinement in TUI
 - **`syntax.go`**: Syntax highlighting with keyword tables for 80+ languages
 - **`language.go`**: Language detection via scc processor's language database
-- **`mcp.go`**: MCP (Model Context Protocol) server over stdio; exposes search as a tool for AI agents
+- **`mcp.go`**: MCP (Model Context Protocol) server; `newMCPServer()` registers the `search` and `get_file` tools for AI agents, `StartMCPServer()` serves them over stdio
+- **`mcp_http.go`**: `StartMCPHTTPServer()` serves the same tools over Streamable HTTP at `/mcp` (`--mcp-http`), stateless, with optional bearer-token auth (`--mcp-http-token-file`); `validateMCPFlags()` refuses a non-loopback bind without `--mcp-lock-dir` or a token
 - **`templates.go`**: Template loading with `//go:embed` for built-in HTML templates; supports custom template paths
 
 ### Subpackages
