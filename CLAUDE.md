@@ -15,10 +15,11 @@ go test -v ./...                      # Verbose tests
 go test -run TestPreParseQuery ./...  # Run a single test
 ```
 
-**Linting:**
+**Linting** (golangci-lint v2):
 ```bash
-golangci-lint run --enable=gofmt ./...
-gofmt -s -w -l .
+golangci-lint run ./...                         # Linters
+golangci-lint fmt --enable gofmt --diff ./...   # Formatting check; v2 treats gofmt as a formatter, not a linter
+gofmt -s -w -l .                                # Format in place
 ```
 
 ## Architecture
@@ -75,4 +76,4 @@ See `pkg/search/README.md` for detailed query syntax documentation.
 - SPDX license headers on all source files (MIT)
 - TUI uses bubbletea + bubbles (text input) + lipgloss (styling)
 - Releases via GoReleaser (`.goreleaser.yaml`)
-- Go 1.25.2, module: `github.com/boyter/cs`
+- Go 1.26.4 (`go.mod`), module: `github.com/boyter/cs`
