@@ -415,6 +415,8 @@ Flags:
       --line-limit int               max matching lines per file in grep mode (-1 = unlimited) (default -1)
       --max-read-size-bytes int      number of bytes to read into a file with the remaining content ignored (default 1000000)
       --mcp                          start as an MCP (Model Context Protocol) server over stdio
+      --mcp-http string              start as an MCP server over Streamable HTTP on this address (e.g. 127.0.0.1:24134), serving /mcp; a non-loopback address requires --mcp-lock-dir or --mcp-http-token-file
+      --mcp-http-token-file string   file holding a bearer token that --mcp-http clients must send as 'Authorization: Bearer <token>'
       --mcp-lock-dir                 restrict the MCP server to --dir: reject searching or reading outside that tree
       --min                          include minified files
       --min-line-length int          number of bytes per average line for file to be considered minified (default 255)
@@ -490,6 +492,53 @@ The calling agent chooses which directory to search per call via the `search` to
 parameter, the same way it would with `grep`. `--dir` sets the *default* directory used when
 `path` is omitted — it is not a restriction. To restrict the server to a single tree, add
 `--mcp-lock-dir`, which rejects any `path` or `get_file` outside `--dir`.
+
+#### Streamable HTTP
+
+`--mcp-http ADDR` serves the same tools over [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
+at `http://ADDR/mcp` instead of stdio. One long-running process then serves every client, so the search cache stays warm
+and `--git-sync` keeps the tree current between sessions.
+
+```shell
+cs --mcp-http 127.0.0.1:24134 --dir /path/to/codebase
+```
+
+The endpoint speaks the stateless 2026-07-28 protocol revision (no `initialize` handshake, no `Mcp-Session-Id`) and the
+earlier session-based revisions, chosen per request, so older and newer clients both work. It runs without sessions:
+every tool call is self-contained.
+
+Binding a non-loopback address (`:24134`, `0.0.0.0:24134`, a LAN IP) is refused unless `--mcp-lock-dir` and/or
+`--mcp-http-token-file` is set. Without a token, anyone who can reach the port can search and read whatever the server
+allows.
+
+`--mcp-http-token-file PATH` requires every request to carry `Authorization: Bearer <token>`, where the token is the
+file's contents (surrounding whitespace trimmed, at least 16 characters). Requests without it get a `401` before
+reaching the MCP handler. The token travels in clear text over plain HTTP, so use it on a network you trust or behind
+TLS or an SSH tunnel.
+
+```shell
+# on the server
+openssl rand -hex 32 > ~/.config/cs/mcp-token && chmod 600 ~/.config/cs/mcp-token
+cs --mcp-http 192.168.1.10:24134 --mcp-http-token-file ~/.config/cs/mcp-token --mcp-lock-dir --dir /path/to/codebase
+
+# on the client
+claude mcp add --transport http codespelunker http://192.168.1.10:24134/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+Alternatively, keep the server on loopback and forward the port over SSH, so SSH does the authentication:
+
+```shell
+# on the server
+cs --mcp-http 127.0.0.1:24134 --mcp-lock-dir --dir /path/to/codebase --git-sync
+
+# on the client
+ssh -N -L 24134:127.0.0.1:24134 server
+claude mcp add --transport http codespelunker http://127.0.0.1:24134/mcp
+```
+
+Requests reaching a loopback listener must carry a loopback `Host` header (DNS rebinding protection), which a forwarded
+`127.0.0.1` URL does.
 
 #### Claude Desktop Configuration
 

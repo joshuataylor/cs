@@ -141,9 +141,10 @@ func resolveSearchRoot(cfg *Config, raw string) (root string, explicit bool, err
 	return resolved, true, nil
 }
 
-// StartMCPServer starts an MCP server over stdio, exposing a "search" tool
-// that uses the same DoSearch pipeline as console and HTTP modes.
-func StartMCPServer(cfg *Config) {
+// newMCPServer builds the MCP server and registers its "search" and "get_file"
+// tools, which use the same DoSearch pipeline as console and HTTP modes. The
+// transport (stdio or Streamable HTTP) is chosen by the caller.
+func newMCPServer(cfg *Config) *server.MCPServer {
 	cache := NewSearchCache()
 
 	mcpServer := server.NewMCPServer(
@@ -360,6 +361,13 @@ func StartMCPServer(cfg *Config) {
 	)
 
 	mcpServer.AddTool(getFileTool, mcpGetFileHandler(cfg))
+
+	return mcpServer
+}
+
+// StartMCPServer starts the MCP server over stdio.
+func StartMCPServer(cfg *Config) {
+	mcpServer := newMCPServer(cfg)
 
 	// stdout is reserved for MCP JSON-RPC; log to stderr
 	errLogger := log.New(os.Stderr, "cs-mcp: ", log.LstdFlags)

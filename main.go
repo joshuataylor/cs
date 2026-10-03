@@ -133,11 +133,33 @@ func main() {
 				}
 			}
 
-			if cfg.MCPLockDir && !cfg.MCPServer {
-				fmt.Fprintf(os.Stderr, "warning: --mcp-lock-dir has no effect without --mcp\n")
+			if cfg.MCPHTTPAddress != "" {
+				if cfg.MCPServer || cfg.HttpServer {
+					fmt.Fprintf(os.Stderr, "error: --mcp-http cannot be combined with --mcp or --http-server\n")
+					os.Exit(1)
+				}
+				if err := validateMCPHTTPAddress(cfg.MCPHTTPAddress, cfg.MCPLockDir, cfg.MCPHTTPTokenFile != ""); err != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					os.Exit(1)
+				}
 			}
 
-			if cfg.MCPServer {
+			if cfg.MCPHTTPTokenFile != "" && cfg.MCPHTTPAddress == "" {
+				fmt.Fprintf(os.Stderr, "error: --mcp-http-token-file requires --mcp-http\n")
+				os.Exit(1)
+			}
+
+			if cfg.MCPLockDir && !cfg.MCPServer && cfg.MCPHTTPAddress == "" {
+				fmt.Fprintf(os.Stderr, "warning: --mcp-lock-dir has no effect without --mcp or --mcp-http\n")
+			}
+
+			if cfg.MCPHTTPAddress != "" {
+				if cfg.GitSync {
+					stopSync := startGitSync(&cfg)
+					defer stopSync()
+				}
+				StartMCPHTTPServer(&cfg)
+			} else if cfg.MCPServer {
 				if cfg.GitSync {
 					stopSync := startGitSync(&cfg)
 					defer stopSync()
@@ -388,6 +410,18 @@ func main() {
 		"mcp-lock-dir",
 		false,
 		"restrict the MCP server to --dir: reject searching or reading outside that tree",
+	)
+	flags.StringVar(
+		&cfg.MCPHTTPAddress,
+		"mcp-http",
+		"",
+		"start as an MCP server over Streamable HTTP on this address (e.g. 127.0.0.1:24134), serving /mcp; a non-loopback address requires --mcp-lock-dir or --mcp-http-token-file",
+	)
+	flags.StringVar(
+		&cfg.MCPHTTPTokenFile,
+		"mcp-http-token-file",
+		"",
+		"file holding a bearer token that --mcp-http clients must send as 'Authorization: Bearer <token>'",
 	)
 	flags.BoolVarP(
 		&cfg.HttpServer,

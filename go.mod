@@ -11,7 +11,7 @@ require (
 	github.com/charmbracelet/bubbletea v0.24.2
 	github.com/charmbracelet/lipgloss v0.9.1
 	github.com/fatih/color v1.15.0
-	github.com/mark3labs/mcp-go v0.55.0
+	github.com/mark3labs/mcp-go v1.1.1
 	github.com/mattn/go-isatty v0.0.22
 	github.com/muesli/termenv v0.15.2
 	github.com/spf13/cobra v1.10.2

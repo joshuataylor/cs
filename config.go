@@ -93,6 +93,15 @@ type Config struct {
 	// search root and any get_file path outside that tree are rejected.
 	MCPLockDir bool
 
+	// MCPHTTPAddress, when set, serves MCP over Streamable HTTP at
+	// http://<address>/mcp instead of stdio. It speaks the stateless
+	// 2026-07-28 revision and the earlier session-based ones on one endpoint.
+	MCPHTTPAddress string
+
+	// MCPHTTPTokenFile, when set, names a file holding a bearer token that
+	// every --mcp-http request must present as "Authorization: Bearer <token>".
+	MCPHTTPTokenFile string
+
 	// HTTP
 	Address         string
 	HttpServer      bool
