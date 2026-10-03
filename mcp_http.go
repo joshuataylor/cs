@@ -44,6 +44,23 @@ func validateMCPHTTPAddress(addr string, locked, authed bool) error {
 		"--mcp-http-token-file (or bind 127.0.0.1 and reach it through an SSH tunnel)", addr)
 }
 
+// validateMCPFlags checks the --mcp-http flags against the rest of the
+// configuration, so a bad combination fails before any mode starts.
+func validateMCPFlags(cfg *Config) error {
+	if cfg.MCPHTTPAddress != "" {
+		if cfg.MCPServer || cfg.HttpServer {
+			return errors.New("--mcp-http cannot be combined with --mcp or --http-server")
+		}
+		if err := validateMCPHTTPAddress(cfg.MCPHTTPAddress, cfg.MCPLockDir, cfg.MCPHTTPTokenFile != ""); err != nil {
+			return err
+		}
+	}
+	if cfg.MCPHTTPTokenFile != "" && cfg.MCPHTTPAddress == "" {
+		return errors.New("--mcp-http-token-file requires --mcp-http")
+	}
+	return nil
+}
+
 // minMCPHTTPTokenLen is the shortest bearer token accepted, to rule out
 // placeholder or guessable values.
 const minMCPHTTPTokenLen = 16
@@ -107,6 +124,46 @@ func newMCPHTTPHandler(cfg *Config, token string) http.Handler {
 	return h
 }
 
+// mcpHTTPShutdownTimeout is how long in-flight requests get to finish once
+// the server is asked to stop.
+const mcpHTTPShutdownTimeout = 5 * time.Second
+
+// newMCPHTTPServer returns the http.Server for --mcp-http, with the MCP
+// handler mounted at mcpHTTPEndpoint.
+func newMCPHTTPServer(cfg *Config, token string) *http.Server {
+	mux := http.NewServeMux()
+	mux.Handle(mcpHTTPEndpoint, newMCPHTTPHandler(cfg, token))
+	return &http.Server{
+		Addr:              cfg.MCPHTTPAddress,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		// No WriteTimeout: a broad search can legitimately take a while.
+	}
+}
+
+// serveMCPHTTP serves srv on ln until ctx is cancelled, then shuts it down,
+// giving in-flight requests mcpHTTPShutdownTimeout to finish. It returns nil
+// after a clean shutdown, and the serve or shutdown error otherwise.
+func serveMCPHTTP(ctx context.Context, srv *http.Server, ln net.Listener) error {
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Serve(ln) }()
+
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), mcpHTTPShutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutdown: %w", err)
+		}
+		return nil
+	}
+}
+
 // StartMCPHTTPServer serves MCP over Streamable HTTP on cfg.MCPHTTPAddress
 // until SIGINT or SIGTERM, then shuts down gracefully.
 func StartMCPHTTPServer(cfg *Config) {
@@ -119,15 +176,7 @@ func StartMCPHTTPServer(cfg *Config) {
 		}
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle(mcpHTTPEndpoint, newMCPHTTPHandler(cfg, token))
-
-	srv := &http.Server{
-		Addr:              cfg.MCPHTTPAddress,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-		// No WriteTimeout: a broad search can legitimately take a while.
-	}
+	srv := newMCPHTTPServer(cfg, token)
 
 	ln, err := net.Listen("tcp", cfg.MCPHTTPAddress)
 	if err != nil {
@@ -150,20 +199,8 @@ func StartMCPHTTPServer(cfg *Config) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Serve(ln) }()
-
-	select {
-	case err := <-errCh:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			fmt.Fprintf(os.Stderr, "MCP HTTP server error: %v\n", err)
-			os.Exit(1)
-		}
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			fmt.Fprintf(os.Stderr, "MCP HTTP server shutdown: %v\n", err)
-		}
+	if err := serveMCPHTTP(ctx, srv, ln); err != nil {
+		fmt.Fprintf(os.Stderr, "MCP HTTP server error: %v\n", err)
+		os.Exit(1)
 	}
 }

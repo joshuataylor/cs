@@ -133,19 +133,8 @@ func main() {
 				}
 			}
 
-			if cfg.MCPHTTPAddress != "" {
-				if cfg.MCPServer || cfg.HttpServer {
-					fmt.Fprintf(os.Stderr, "error: --mcp-http cannot be combined with --mcp or --http-server\n")
-					os.Exit(1)
-				}
-				if err := validateMCPHTTPAddress(cfg.MCPHTTPAddress, cfg.MCPLockDir, cfg.MCPHTTPTokenFile != ""); err != nil {
-					fmt.Fprintf(os.Stderr, "error: %v\n", err)
-					os.Exit(1)
-				}
-			}
-
-			if cfg.MCPHTTPTokenFile != "" && cfg.MCPHTTPAddress == "" {
-				fmt.Fprintf(os.Stderr, "error: --mcp-http-token-file requires --mcp-http\n")
+			if err := validateMCPFlags(&cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
 

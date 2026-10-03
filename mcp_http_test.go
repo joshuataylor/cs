@@ -5,12 +5,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -106,7 +108,7 @@ func TestMCPHTTPRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			c := client.NewClient(tr, client.WithProtocolVersion(version))
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			if err := c.Start(ctx); err != nil {
 				t.Fatalf("start: %v", err)
 			}
@@ -175,7 +177,7 @@ func TestMCPHTTPRejectsForeignHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status %d, want 403", resp.StatusCode)
 	}
@@ -199,24 +201,7 @@ func TestMCPHTTPBearerToken(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			body := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{` +
-				`"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
-			req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Accept", "application/json, text/event-stream")
-			req.Header.Set("MCP-Protocol-Version", "2026-07-28")
-			req.Header.Set("Mcp-Method", "server/discover")
-			if c.header != "" {
-				req.Header.Set("Authorization", c.header)
-			}
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				t.Fatal(err)
-			}
-			resp.Body.Close()
+			resp := postDiscover(t, url, c.header)
 			if resp.StatusCode != c.want {
 				t.Errorf("status %d, want %d", resp.StatusCode, c.want)
 			}
@@ -224,5 +209,104 @@ func TestMCPHTTPBearerToken(t *testing.T) {
 				t.Error("401 without a WWW-Authenticate header")
 			}
 		})
+	}
+}
+
+// postDiscover sends a stateless 2026-07-28 server/discover request to url,
+// with the given Authorization header if non-empty. The body is closed;
+// status and headers remain readable.
+func postDiscover(t *testing.T, url, authorization string) *http.Response {
+	t.Helper()
+	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{` +
+		`"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+	req.Header.Set("Mcp-Method", "server/discover")
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	return resp
+}
+
+func TestValidateMCPFlags(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr string
+	}{
+		{"defaults", func(c *Config) {}, ""},
+		{"stdio mcp", func(c *Config) { c.MCPServer = true }, ""},
+		{"loopback http", func(c *Config) { c.MCPHTTPAddress = "127.0.0.1:24134" }, ""},
+		{"with --mcp", func(c *Config) { c.MCPHTTPAddress = "127.0.0.1:24134"; c.MCPServer = true }, "cannot be combined"},
+		{"with --http-server", func(c *Config) { c.MCPHTTPAddress = "127.0.0.1:24134"; c.HttpServer = true }, "cannot be combined"},
+		{"lan unprotected", func(c *Config) { c.MCPHTTPAddress = "192.168.1.10:24134" }, "not a loopback address"},
+		{"lan locked", func(c *Config) { c.MCPHTTPAddress = "192.168.1.10:24134"; c.MCPLockDir = true }, ""},
+		{"lan token", func(c *Config) { c.MCPHTTPAddress = "192.168.1.10:24134"; c.MCPHTTPTokenFile = "/tmp/token" }, ""},
+		{"bad address", func(c *Config) { c.MCPHTTPAddress = "24134" }, "invalid address"},
+		{"token without http", func(c *Config) { c.MCPHTTPTokenFile = "/tmp/token" }, "requires --mcp-http"},
+		{"token with stdio", func(c *Config) { c.MCPServer = true; c.MCPHTTPTokenFile = "/tmp/token" }, "requires --mcp-http"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			c.mutate(&cfg)
+			err := validateMCPFlags(&cfg)
+			switch {
+			case c.wantErr == "" && err != nil:
+				t.Errorf("unexpected error: %v", err)
+			case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
+				t.Errorf("error %v, want one containing %q", err, c.wantErr)
+			}
+		})
+	}
+}
+
+// TestServeMCPHTTPShutsDownOnCancel checks the server built by
+// newMCPHTTPServer answers requests, and that cancelling the context (what
+// SIGINT/SIGTERM do in StartMCPHTTPServer) returns cleanly and closes the port.
+func TestServeMCPHTTPShutsDownOnCancel(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Directory = t.TempDir()
+	cfg.MCPLockDir = true
+	srv := newMCPHTTPServer(&cfg, "")
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- serveMCPHTTP(ctx, srv, ln) }()
+
+	if resp := postDiscover(t, "http://"+addr+mcpHTTPEndpoint, ""); resp.StatusCode != http.StatusOK {
+		t.Fatalf("server/discover status %d, want 200", resp.StatusCode)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveMCPHTTP returned %v, want nil after cancel", err)
+		}
+	case <-time.After(mcpHTTPShutdownTimeout + 5*time.Second):
+		t.Fatal("serveMCPHTTP did not return after cancel")
+	}
+
+	if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
+		_ = conn.Close()
+		t.Error("port still accepting connections after shutdown")
 	}
 }
