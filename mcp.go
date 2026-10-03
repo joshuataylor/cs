@@ -218,6 +218,7 @@ func newMCPServer(cfg *Config) *server.MCPServer {
 			"- Once a specific file is identified, switch to get_file to read it — don't keep searching the same file.\n"+
 			"- Searching a repository other than the default one → pass its directory as 'path'. Note that only the default directory is kept up to date by --git-sync; other directories are searched exactly as they are on disk."),
 		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("query",
 			mcp.Description("The search query. Terms are ANDed by default. Supports: OR ('error OR exception'), NOT ('NOT vendor'), "+
 				"grouping ('(auth OR login) AND handler'), quoted phrases ('\"exact match\"'), regex (/pattern/), fuzzy (term~1, term~2). "+
@@ -348,6 +349,7 @@ func newMCPServer(cfg *Config) *server.MCPServer {
 	getFileTool := mcp.NewTool("get_file",
 		mcp.WithDescription("Read a file's full contents by path. Prefer this over repeated searches once a file is identified — search snippets are truncated and miss logic between matches. Use start_line/end_line for large files. Returns JSON with line-numbered 'content' and, for source files, language/complexity stats."),
 		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("path",
 			mcp.Description("File path relative to the project directory, or absolute path within the project."),
 			mcp.Required(),
