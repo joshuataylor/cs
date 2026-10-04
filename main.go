@@ -14,6 +14,16 @@ import (
 
 const Version = "3.2.0"
 
+// versionSuffix is appended to Version wherever it is reported (--version,
+// the help header, MCP server info), so a build from a fork or branch can say
+// what it is, e.g. go build -ldflags "-X main.versionSuffix=-josh.<commit>".
+var versionSuffix = ""
+
+// fullVersion is Version plus any suffix set at link time.
+func fullVersion() string {
+	return Version + versionSuffix
+}
+
 func main() {
 	cfg := DefaultConfig()
 	var cpuProfile string
@@ -23,7 +33,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use: "cs",
 		Long: "code spelunker (cs) code search.\n" +
-			"Version " + Version + "\n" +
+			"Version " + fullVersion() + "\n" +
 			"Ben Boyter <ben@boyter.org>" +
 			"\n\n" +
 			"cs recursively searches the current directory using some boolean logic\n" +
@@ -61,7 +71,7 @@ func main() {
 			"- F2 cycle code filter (default/only-code/only-comments/only-strings/only-declarations/only-usages)\n" +
 			"- F3 cycle gravity (off/low/default/logic/brain)\n" +
 			"- F4 cycle noise (silence/quiet/default/loud/raw)\n",
-		Version: Version,
+		Version: fullVersion(),
 		Run: func(cmd *cobra.Command, args []string) {
 			if cpuProfile != "" {
 				f, err := os.Create(cpuProfile)

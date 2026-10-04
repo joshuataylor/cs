@@ -175,7 +175,7 @@ func newMCPServer(cfg *Config, opts ...server.ServerOption) *server.MCPServer {
 		server.WithRecovery(),
 		server.WithCacheHints(mcpListCacheTTLMs, mcp.CacheScopePrivate),
 	)
-	mcpServer := server.NewMCPServer("codespelunker", Version, opts...)
+	mcpServer := server.NewMCPServer("codespelunker", fullVersion(), opts...)
 
 	searchTool := mcp.NewTool("search",
 		mcp.WithDescription("Search code files recursively using boolean queries, regex, and fuzzy matching with relevance ranking.\n\n"+
