@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/boyter/cs/v3/pkg/common"
 	"github.com/boyter/cs/v3/pkg/ranker"
@@ -141,17 +142,27 @@ func resolveSearchRoot(cfg *Config, raw string) (root string, explicit bool, err
 	return resolved, true, nil
 }
 
+// mcpListCacheTTLMs is the cache hint on tools/list: the tool list is fixed
+// for the life of the process, so clients may reuse it for an hour.
+const mcpListCacheTTLMs = int64(time.Hour / time.Millisecond)
+
 // newMCPServer builds the MCP server and registers its "search" and "get_file"
 // tools, which use the same DoSearch pipeline as console and HTTP modes. The
-// transport (stdio or Streamable HTTP) is chosen by the caller.
-func newMCPServer(cfg *Config) *server.MCPServer {
+// transport (stdio or Streamable HTTP) is chosen by the caller, which can add
+// server options such as tool middleware.
+//
+// Tool middleware applies in the order it is added, outermost first, so the
+// caller's options go ahead of server.WithRecovery: a logging middleware then
+// sees a recovered panic as the error it becomes.
+func newMCPServer(cfg *Config, opts ...server.ServerOption) *server.MCPServer {
 	cache := NewSearchCache()
 
-	mcpServer := server.NewMCPServer(
-		"codespelunker",
-		Version,
+	opts = append(opts[:len(opts):len(opts)],
 		server.WithToolCapabilities(false),
+		server.WithRecovery(),
+		server.WithCacheHints(mcpListCacheTTLMs, mcp.CacheScopePrivate),
 	)
+	mcpServer := server.NewMCPServer("codespelunker", Version, opts...)
 
 	searchTool := mcp.NewTool("search",
 		mcp.WithDescription("Search code files recursively using boolean queries, regex, and fuzzy matching with relevance ranking.\n\n"+

@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -115,9 +116,17 @@ func isLoopbackHost(host string) bool {
 // its own session. mcp-go picks the protocol era per request. DNS rebinding
 // protection stays on: a request over a loopback connection must carry a
 // loopback Host header, which an SSH-forwarded 127.0.0.1 URL does. A non-empty
-// token puts bearer authentication in front of everything.
-func newMCPHTTPHandler(cfg *Config, token string) http.Handler {
-	h := http.Handler(server.NewStreamableHTTPServer(newMCPServer(cfg), server.WithStateLess(true)))
+// token puts bearer authentication in front of everything. A non-nil logger
+// gets one line per tool call (see mcpCallLogMiddleware).
+func newMCPHTTPHandler(cfg *Config, token string, logger *slog.Logger) http.Handler {
+	var opts []server.ServerOption
+	if logger != nil {
+		opts = append(opts, server.WithToolHandlerMiddleware(mcpCallLogMiddleware(logger)))
+	}
+	h := http.Handler(server.NewStreamableHTTPServer(newMCPServer(cfg, opts...),
+		server.WithStateLess(true),
+		server.WithHTTPContextFunc(withMCPRemoteAddr),
+	))
 	if token != "" {
 		h = requireBearerToken(token, h)
 	}
@@ -128,11 +137,19 @@ func newMCPHTTPHandler(cfg *Config, token string) http.Handler {
 // the server is asked to stop.
 const mcpHTTPShutdownTimeout = 5 * time.Second
 
+// mcpHealthEndpoint answers "ok" without authentication, for service
+// managers and uptime checks; it reveals nothing about the corpus.
+const mcpHealthEndpoint = "/healthz"
+
 // newMCPHTTPServer returns the http.Server for --mcp-http, with the MCP
-// handler mounted at mcpHTTPEndpoint.
-func newMCPHTTPServer(cfg *Config, token string) *http.Server {
+// handler mounted at mcpHTTPEndpoint and a health check at mcpHealthEndpoint.
+func newMCPHTTPServer(cfg *Config, token string, logger *slog.Logger) *http.Server {
 	mux := http.NewServeMux()
-	mux.Handle(mcpHTTPEndpoint, newMCPHTTPHandler(cfg, token))
+	mux.Handle(mcpHTTPEndpoint, newMCPHTTPHandler(cfg, token, logger))
+	mux.HandleFunc(mcpHealthEndpoint, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = fmt.Fprintln(w, "ok")
+	})
 	return &http.Server{
 		Addr:              cfg.MCPHTTPAddress,
 		Handler:           mux,
@@ -176,7 +193,9 @@ func StartMCPHTTPServer(cfg *Config) {
 		}
 	}
 
-	srv := newMCPHTTPServer(cfg, token)
+	// One line per tool call on stderr, which systemd sends to the journal.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	srv := newMCPHTTPServer(cfg, token, logger)
 
 	ln, err := net.Listen("tcp", cfg.MCPHTTPAddress)
 	if err != nil {
