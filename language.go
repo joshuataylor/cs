@@ -41,8 +41,33 @@ func fileCodeStats(filename string, content []byte) (language string, lines, cod
 		Bytes:           int64(len(content)),
 		ClassifyContent: true,
 	}
-	processor.CountStats(sccJob)
+	if !countStatsSafe(sccJob) {
+		// scc panicked on this file: report it as unrecognised (no stats, no
+		// content types) rather than crash the search worker and the process.
+		return "", 0, 0, 0, 0, 0, nil
+	}
 	return language, sccJob.Lines, sccJob.Code, sccJob.Comment, sccJob.Blank, sccJob.Complexity, sccJob.ContentByteType
+}
+
+// sccCountStats is processor.CountStats, held in a variable so a test can
+// stand in a counter that panics.
+var sccCountStats = processor.CountStats
+
+// countStatsSafe runs scc's CountStats and reports whether it finished
+// without panicking. scc runs on every file a search reads, including
+// whatever odd input a large tree holds, and a panic there kills the whole
+// process: boyter/cs#61 was scc's blankState indexing past the end of
+// ContentByteType for a file ending exactly on a docstring marker (fixed in
+// scc), which took down a long-running HTTP server on the first request that
+// touched such a file. This keeps a future case to one file losing its stats.
+func countStatsSafe(sccJob *processor.FileJob) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	sccCountStats(sccJob)
+	return true
 }
 
 // languageExtensions resolves language names to file extensions using the scc

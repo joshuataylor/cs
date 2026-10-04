@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/boyter/scc/v4/processor"
 )
 
 func TestDetectLanguage(t *testing.T) {
@@ -162,4 +164,23 @@ func TestLanguageExtensions(t *testing.T) {
 			t.Errorf("expected no extensions for unknown language, got %v", exts)
 		}
 	})
+}
+
+// TestFileCodeStatsRecoversFromSccPanic checks a panic inside scc's counting
+// costs one file its stats instead of crashing the process.
+func TestFileCodeStatsRecoversFromSccPanic(t *testing.T) {
+	initLanguageDatabase()
+	orig := sccCountStats
+	sccCountStats = func(*processor.FileJob) { panic("index out of range") }
+	defer func() { sccCountStats = orig }()
+
+	lang, lines, code, _, _, _, byteType := fileCodeStats("main.go", []byte("package main\n\nfunc main() {}\n"))
+	if lang != "" || lines != 0 || code != 0 || byteType != nil {
+		t.Errorf("after a panic want no language or stats, got %q lines=%d code=%d types=%d", lang, lines, code, len(byteType))
+	}
+
+	sccCountStats = orig
+	if lang, _, code, _, _, _, _ := fileCodeStats("main.go", []byte("package main\n\nfunc main() {}\n")); lang != "Go" || code == 0 {
+		t.Errorf("normal counting broken: %q code=%d", lang, code)
+	}
 }
