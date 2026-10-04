@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -267,4 +269,116 @@ func TestHTTPSearchHTMLCarriesScope(t *testing.T) {
 			}
 		}
 	}
+}
+
+// fillSearchGate takes every slot of the process-wide search gate and returns
+// a function that releases them, so a search started meanwhile waits in the
+// gate until its context ends.
+func fillSearchGate(t *testing.T) func() {
+	t.Helper()
+	cfg := DefaultConfig()
+	var releases []func()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		release, err := acquireSearchSlot(ctx, &cfg)
+		cancel()
+		if err != nil {
+			break
+		}
+		releases = append(releases, release)
+	}
+	if len(releases) == 0 {
+		t.Fatal("could not take any search slot")
+	}
+	return func() {
+		for _, r := range releases {
+			r()
+		}
+	}
+}
+
+// TestMCPHTTPClientDisconnectCancelsSearch checks a client giving up on an
+// MCP-over-HTTP search cancels it on the server: the handler, stuck waiting
+// for a slot, returns and logs the call as cancelled.
+func TestMCPHTTPClientDisconnectCancelsSearch(t *testing.T) {
+	var buf safeBuffer
+	url := startTestMCPHTTP(t, "", slog.New(slog.NewTextHandler(&buf, nil)))
+	releaseAll := fillSearchGate(t)
+	defer releaseAll()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"query":"greetSpelunker"},`+mcpMeta+`}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", "2026-07-28")
+	req.Header.Set("Mcp-Method", "tools/call")
+	req.Header.Set("Mcp-Name", "search")
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("request finished although every search slot was taken")
+	}
+
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if strings.Contains(buf.String(), "outcome=cancelled") {
+			return
+		}
+	}
+	t.Fatalf("server did not log the search as cancelled after the client left:\n%s", buf.String())
+}
+
+// TestHTTPSearchClientDisconnectReturns checks the web handler gives up a
+// search whose client has gone, rather than waiting (or searching) on.
+func TestHTTPSearchClientDisconnectReturns(t *testing.T) {
+	root := writeToolFixture(t)
+	cfg := DefaultConfig()
+	cfg.Directory = root
+	tmpl, err := resolveSearchTemplate(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpSearchHandler(&cfg, NewSearchCache(), tmpl, nil)(w, r)
+		close(done)
+	}))
+	defer srv.Close()
+	releaseAll := fillSearchGate(t)
+	defer releaseAll()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/?q=WidgetRegistry&format=json", nil)
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("request finished although every search slot was taken")
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("web handler still running 3s after its client disconnected")
+	}
+}
+
+// safeBuffer is a bytes.Buffer safe for the server's logger and the test to
+// use at once.
+type safeBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *safeBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *safeBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
