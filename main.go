@@ -418,6 +418,12 @@ func main() {
 		"",
 		"directory with a repository catalogue (repos.csv, optional repos-meta.csv) for a --dir laid out as <org>/<repo>; enables the list_repos MCP tool and the 'tag' search parameter (web and MCP)",
 	)
+	flags.StringVar(
+		&cfg.MCPInstructionsFile,
+		"mcp-instructions-file",
+		"",
+		"text file sent to MCP clients as the server's instructions, e.g. how the tree under --dir is laid out and how best to search it",
+	)
 	// --mcp-catalogue was the flag's name before the web server could use it.
 	flags.StringVar(&cfg.CatalogueDir, "mcp-catalogue", "", "deprecated: use --catalogue")
 	_ = flags.MarkHidden("mcp-catalogue")

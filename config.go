@@ -108,6 +108,11 @@ type Config struct {
 	// search parameter (web and MCP), which searches only that tag's repos.
 	CatalogueDir string
 
+	// MCPInstructionsFile, when set, names a text file sent to MCP clients as
+	// the server's instructions (in the initialize result and server/discover),
+	// e.g. how the tree under --dir is laid out and how best to search it.
+	MCPInstructionsFile string
+
 	// SearchRoots, when set, are walked instead of Directory: several
 	// repositories searched as one tree (the "tag" parameter fills it).
 	SearchRoots []string

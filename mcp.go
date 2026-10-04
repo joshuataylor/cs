@@ -161,7 +161,16 @@ const mcpListCacheTTLMs = int64(time.Hour / time.Millisecond)
 func newMCPServer(cfg *Config, opts ...server.ServerOption) *server.MCPServer {
 	cache := NewSearchCache()
 
-	opts = append(opts[:len(opts):len(opts)],
+	opts = opts[:len(opts):len(opts)]
+	// The file was checked by validateMCPFlags; read it once, here.
+	if cfg.MCPInstructionsFile != "" {
+		if b, err := os.ReadFile(cfg.MCPInstructionsFile); err == nil {
+			opts = append(opts, server.WithInstructions(strings.TrimSpace(string(b))))
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: --mcp-instructions-file: %v\n", err)
+		}
+	}
+	opts = append(opts,
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 		server.WithCacheHints(mcpListCacheTTLMs, mcp.CacheScopePrivate),

@@ -544,3 +544,43 @@ func TestFileOutlineDescriptionStable(t *testing.T) {
 		t.Errorf("description does not list the sorted languages:\n%s", desc)
 	}
 }
+
+func TestMCPInstructionsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "instructions.md")
+	if err := os.WriteFile(path, []byte("\nPaths are <org>/<repo>. Scope searches with path.\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := toolConfig(t.TempDir())
+	cfg.MCPInstructionsFile = path
+
+	c, err := client.NewInProcessClient(newMCPServer(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	ctx := context.Background()
+	if err := c.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	res, err := c.Initialize(ctx, mcp.InitializeRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Instructions != "Paths are <org>/<repo>. Scope searches with path." {
+		t.Errorf("instructions %q", res.Instructions)
+	}
+
+	flags := DefaultConfig()
+	flags.MCPInstructionsFile = path
+	if err := validateMCPFlags(&flags); err == nil || !strings.Contains(err.Error(), "requires --mcp") {
+		t.Errorf("instructions without an MCP mode: %v", err)
+	}
+	flags.MCPServer = true
+	if err := validateMCPFlags(&flags); err != nil {
+		t.Errorf("with --mcp: %v", err)
+	}
+	flags.MCPInstructionsFile = filepath.Join(t.TempDir(), "missing.md")
+	if err := validateMCPFlags(&flags); err == nil {
+		t.Error("missing instructions file accepted")
+	}
+}

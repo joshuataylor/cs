@@ -60,6 +60,14 @@ func validateMCPFlags(cfg *Config) error {
 	if cfg.MCPHTTPTokenFile != "" && cfg.MCPHTTPAddress == "" {
 		return errors.New("--mcp-http-token-file requires --mcp-http")
 	}
+	if cfg.MCPInstructionsFile != "" {
+		if !cfg.MCPServer && cfg.MCPHTTPAddress == "" {
+			return errors.New("--mcp-instructions-file requires --mcp or --mcp-http")
+		}
+		if _, err := os.ReadFile(cfg.MCPInstructionsFile); err != nil {
+			return fmt.Errorf("--mcp-instructions-file: %v", err)
+		}
+	}
 	if cfg.CatalogueDir != "" {
 		if !cfg.MCPServer && cfg.MCPHTTPAddress == "" && !cfg.HttpServer {
 			return errors.New("--catalogue requires --mcp, --mcp-http or --http-server")
