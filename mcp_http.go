@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -58,6 +59,14 @@ func validateMCPFlags(cfg *Config) error {
 	}
 	if cfg.MCPHTTPTokenFile != "" && cfg.MCPHTTPAddress == "" {
 		return errors.New("--mcp-http-token-file requires --mcp-http")
+	}
+	if cfg.MCPCatalogueDir != "" {
+		if !cfg.MCPServer && cfg.MCPHTTPAddress == "" {
+			return errors.New("--mcp-catalogue requires --mcp or --mcp-http")
+		}
+		if _, err := os.Stat(filepath.Join(cfg.MCPCatalogueDir, catalogueReposFile)); err != nil {
+			return fmt.Errorf("--mcp-catalogue: %v", err)
+		}
 	}
 	return nil
 }

@@ -62,6 +62,11 @@ See `pkg/search/README.md` for detailed query syntax documentation.
 - **`language.go`**: Language detection via scc processor's language database
 - **`mcp.go`**: MCP (Model Context Protocol) server; `newMCPServer()` registers the `search` and `get_file` tools for AI agents, `StartMCPServer()` serves them over stdio
 - **`mcp_http.go`**: `StartMCPHTTPServer()` serves the same tools over Streamable HTTP at `/mcp` (`--mcp-http`), stateless, with optional bearer-token auth (`--mcp-http-token-file`); `validateMCPFlags()` refuses a non-loopback bind without `--mcp-lock-dir` or a token
+- **`mcp_tools.go`**: navigation tools shared by both MCP transports: `search_facets` (match counts by directory/language/extension), `file_outline` (declarations via `pkg/ranker` heuristics), `list_dir`, `find_files`, `code_stats` (scc per language)
+- **`mcp_git.go`**: git-backed reads: `get_file`/`file_outline` `rev` (`git cat-file blob rev:path`, revs validated so they can't be read as options) and `list_refs`
+- **`mcp_related.go`**: `related_files`, which searches for a file's most distinctive identifiers and ranks the results with BM25
+- **`mcp_catalogue.go`**: `list_repos` over a `repos.csv`/`repos-meta.csv` catalogue (`--mcp-catalogue`), reloaded when the files change
+- **`mcp_log.go`**: one `slog` line per tool call in `--mcp-http` mode
 - **`templates.go`**: Template loading with `//go:embed` for built-in HTML templates; supports custom template paths
 
 ### Subpackages

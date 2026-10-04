@@ -415,6 +415,7 @@ Flags:
       --line-limit int               max matching lines per file in grep mode (-1 = unlimited) (default -1)
       --max-read-size-bytes int      number of bytes to read into a file with the remaining content ignored (default 1000000)
       --mcp                          start as an MCP (Model Context Protocol) server over stdio
+      --mcp-catalogue string         directory with a repository catalogue (repos.csv, optional repos-meta.csv) for a --dir laid out as <org>/<repo>; enables the list_repos MCP tool
       --mcp-http string              start as an MCP server over Streamable HTTP on this address (e.g. 127.0.0.1:24134), serving /mcp; a non-loopback address requires --mcp-lock-dir or --mcp-http-token-file
       --mcp-http-token-file string   file holding a bearer token that --mcp-http clients must send as 'Authorization: Bearer <token>'
       --mcp-lock-dir                 restrict the MCP server to --dir: reject searching or reading outside that tree
@@ -572,7 +573,7 @@ Add to your `.mcp.json`:
 
 #### Exposed Tools
 
-The MCP server exposes two tools:
+The MCP server exposes `search` and `get_file`, plus tools for finding your way around a tree (described after them), all read-only:
 
 **`search`** — Search code files recursively with relevance ranking.
 
@@ -607,8 +608,22 @@ Results are returned as JSON with the same fields as `--format json`: filename, 
 | `path` | string | yes | File path, absolute or relative to the default directory. Restricted to `--dir` only when `--mcp-lock-dir` is set |
 | `start_line` | number | no | 1-based start line number (reads from beginning if omitted) |
 | `end_line` | number | no | 1-based end line number, inclusive (reads to end if omitted) |
+| `rev` | string | no | Git revision (tag, branch or commit) to read the file as of, instead of the working tree. The file must be inside a git repository; it may have been deleted since |
 
 Returns JSON with line-numbered file content and, for recognised source files, language, lines, code, comment, blank, and complexity fields.
+
+**Navigation tools.** These help an agent count, outline and locate before it reads, so it runs fewer broad searches. Paths follow the same rules as `search` and `get_file` (relative to the default directory, confined by `--mcp-lock-dir`), and unknown parameters are rejected.
+
+| Tool | Parameters | Returns |
+|---|---|---|
+| `search_facets` | `query` (required), `path`, `path_filter`, `file`, `include_ext`, `language`, `case_sensitive`, `depth` (1-5, default 2), `limit` | Matching files and match counts grouped by directory (to `depth` levels, e.g. `org/repo`), language and extension, instead of snippets |
+| `file_outline` | `path` (required), `rev` | The file's declarations (functions, types, classes, ...) with line numbers, using the `only-declarations` heuristics |
+| `list_dir` | `path`, `depth` (1-4), `include_hidden`, `limit` | Directory entries with types and sizes. Lists what is on disk; `.gitignore` is not applied |
+| `find_files` | `pattern` (required), `path`, `limit` | Files whose name matches a glob (`*_test.go`) or substring, respecting `.gitignore` |
+| `code_stats` | `path`, `top` | scc totals per language and the most complex files, for a directory or one file |
+| `list_refs` | `path`, `kind` (`tags`, `branches`, `all`), `limit` | A git repository's tags and branches, newest first, and its HEAD; feeds `rev` |
+| `related_files` | `path` (required), `scope`, `limit` | Files sharing at least two of the file's most distinctive identifiers (its tests, callers, siblings), BM25-ranked, with the terms used |
+| `list_repos` | `query`, `org`, `tag`, `language`, `include_archived`, `limit` | Only with `--mcp-catalogue DIR`: repositories from a catalogue (`DIR/repos.csv`, optional `DIR/repos-meta.csv`) of a `--dir` laid out as `<org>/<repo>`, with their paths, descriptions, tags and whether they are on disk |
 
 ### Support
 

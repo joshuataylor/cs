@@ -102,6 +102,11 @@ type Config struct {
 	// every --mcp-http request must present as "Authorization: Bearer <token>".
 	MCPHTTPTokenFile string
 
+	// MCPCatalogueDir, when set, is a directory holding a repository catalogue
+	// (repos.csv, optionally repos-meta.csv) for a tree laid out as
+	// <dir>/<org>/<repo>; it enables the list_repos MCP tool.
+	MCPCatalogueDir string
+
 	// HTTP
 	Address         string
 	HttpServer      bool

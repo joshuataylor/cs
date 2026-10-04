@@ -16,7 +16,7 @@ import (
 // mcpLoggedArgs are the tool arguments worth a place in the call log, in the
 // order they are written. Anything else (snippet sizes, ranking knobs) is
 // left out to keep one call to one readable line.
-var mcpLoggedArgs = []string{"query", "path", "path_filter", "file", "language", "include_ext", "snippet_mode", "start_line", "end_line"}
+var mcpLoggedArgs = []string{"query", "pattern", "path", "path_filter", "file", "language", "include_ext", "snippet_mode", "rev", "org", "tag", "depth", "start_line", "end_line"}
 
 // mcpRemoteAddrKey is the context key for the HTTP client's address.
 type mcpRemoteAddrKey struct{}

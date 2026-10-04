@@ -38,6 +38,7 @@ type mcpSearchResponse struct {
 
 // mcpFileResult is the JSON response for the get_file tool.
 type mcpFileResult struct {
+	Rev        string `json:"rev,omitempty"`
 	Language   string `json:"language,omitempty"`
 	Lines      int64  `json:"lines,omitempty"`
 	Code       int64  `json:"code,omitempty"`
@@ -371,9 +372,24 @@ func newMCPServer(cfg *Config, opts ...server.ServerOption) *server.MCPServer {
 		mcp.WithNumber("end_line",
 			mcp.Description("1-based end line number (inclusive). If omitted, reads to the end."),
 		),
+		mcp.WithString("rev",
+			mcp.Description("Optional git revision (tag, branch or commit id, e.g. 'v1.4.0' or 'origin/main') to read the file as of, instead of the "+
+				"working tree. The file must be inside a git repository; it may have been deleted since. Use list_refs to find tags and branches."),
+		),
 	)
 
 	mcpServer.AddTool(getFileTool, mcpGetFileHandler(cfg))
+
+	mcpServer.AddTool(newMCPFacetsTool(), mcpFacetsHandler(cfg, cache))
+	mcpServer.AddTool(newMCPOutlineTool(), mcpOutlineHandler(cfg))
+	mcpServer.AddTool(newMCPListDirTool(), mcpListDirHandler(cfg))
+	mcpServer.AddTool(newMCPFindFilesTool(), mcpFindFilesHandler(cfg))
+	mcpServer.AddTool(newMCPCodeStatsTool(), mcpCodeStatsHandler(cfg))
+	mcpServer.AddTool(newMCPListRefsTool(), mcpListRefsHandler(cfg))
+	mcpServer.AddTool(newMCPRelatedFilesTool(), mcpRelatedFilesHandler(cfg, cache))
+	if cfg.MCPCatalogueDir != "" {
+		mcpServer.AddTool(newMCPListReposTool(), mcpListReposHandler(cfg, newRepoCatalogue(cfg.MCPCatalogueDir)))
+	}
 
 	return mcpServer
 }
@@ -401,32 +417,21 @@ func mcpGetFileHandler(cfg *Config) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("path must not be empty"), nil
 		}
 
-		// Resolve relative paths against the default search root, so a bare
+		// Relative paths resolve against the default search root, so a bare
 		// filename means the same thing here as it does in a default search.
-		absProject, err := defaultSearchRoot(cfg)
+		absResolved, err := resolveMCPFilePath(cfg, path)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to resolve project directory: %v", err)), nil
-		}
-		resolved := expandHome(path)
-		if !filepath.IsAbs(resolved) {
-			resolved = filepath.Join(absProject, resolved)
-		}
-		absResolved, err := filepath.Abs(resolved)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to resolve file path: %v", err)), nil
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		// Search can name any directory, so get_file must be able to read what
-		// search returned. --mcp-lock-dir restores the single-tree restriction.
-		if cfg.MCPLockDir && !withinRoot(absProject, absResolved) {
-			return mcp.NewToolResultError(fmt.Sprintf(
-				"path is outside %s and this server was started with --mcp-lock-dir", absProject)), nil
+		// Read the file, from disk or as of a git revision.
+		rev := ""
+		if v, ok := request.GetArguments()["rev"].(string); ok {
+			rev = strings.TrimSpace(v)
 		}
-
-		// Read the file
-		content, err := readFileContent(absResolved, cfg.MaxReadSizeBytes)
+		content, err := mcpReadFile(ctx, cfg, absResolved, rev)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to read file: %v", err)), nil
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		// Binary detection: check first 10KB for NUL bytes
@@ -474,6 +479,7 @@ func mcpGetFileHandler(cfg *Config) server.ToolHandlerFunc {
 		}
 
 		result := mcpFileResult{
+			Rev:     rev,
 			Content: sb.String(),
 		}
 		if lang != "" {

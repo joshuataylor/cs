@@ -412,6 +412,12 @@ func main() {
 		"",
 		"file holding a bearer token that --mcp-http clients must send as 'Authorization: Bearer <token>'",
 	)
+	flags.StringVar(
+		&cfg.MCPCatalogueDir,
+		"mcp-catalogue",
+		"",
+		"directory with a repository catalogue (repos.csv, optional repos-meta.csv) for a --dir laid out as <org>/<repo>; enables the list_repos MCP tool",
+	)
 	flags.BoolVarP(
 		&cfg.HttpServer,
 		"http-server",
