@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -389,7 +390,7 @@ func TestListRepos(t *testing.T) {
 "github.com","acme","retired","master","go"
 `)
 	meta := "host,org,repo,description,primary_language,languages,topics,license,homepage,is_archived,created_at,canonical,is_fork,fork_parent\n" +
-		"github.com,acme,widgets,A registry of widgets,Go,Go,\"registry,widgets\",MIT,,false,2020-01-01,,false,\n" +
+		"github.com,acme,widgets,A registry of widgets,Go,Go,registry;widgets,MIT,,false,2020-01-01,,false,\n" +
 		"github.com,acme,gadgets,Spinning gadgets,Python,Python,,MIT,,false,2020-01-01,,false,\n" +
 		"github.com,acme,retired,Old widget code,Go,Go,,MIT,,true,2015-01-01,,true,upstream/retired\n"
 	if err := os.WriteFile(filepath.Join(catDir, catalogueMetaFile), []byte(meta), 0o644); err != nil {
@@ -510,5 +511,36 @@ func TestNewMCPServerTools(t *testing.T) {
 	cfg.MCPCatalogueDir = catDir
 	if _, ok := list(cfg)["list_repos"]; !ok {
 		t.Error("list_repos missing with --mcp-catalogue")
+	}
+}
+
+func TestSplitList(t *testing.T) {
+	cases := []struct {
+		in, seps string
+		want     []string
+	}{
+		{"go,mcp, reference", ",", []string{"go", "mcp", "reference"}},
+		{"intellij-idea;maven;spring-boot", ";,", []string{"intellij-idea", "maven", "spring-boot"}},
+		{"a, b;c", ";,", []string{"a", "b", "c"}},
+		{"", ",", nil},
+		{" ; ,", ";,", nil},
+	}
+	for _, c := range cases {
+		got := splitList(c.in, c.seps)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("splitList(%q, %q) = %q, want %q", c.in, c.seps, got, c.want)
+		}
+	}
+}
+
+// TestFileOutlineDescriptionStable checks the language list in the tool
+// description is sorted, so tools/list is the same on every start.
+func TestFileOutlineDescriptionStable(t *testing.T) {
+	langs := sortedDeclarationLanguages()
+	if !sort.StringsAreSorted(langs) || len(langs) == 0 {
+		t.Fatalf("languages not sorted: %v", langs)
+	}
+	if desc := newMCPOutlineTool().Description; !strings.Contains(desc, strings.Join(langs, ", ")) {
+		t.Errorf("description does not list the sorted languages:\n%s", desc)
 	}
 }

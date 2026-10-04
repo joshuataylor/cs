@@ -340,12 +340,22 @@ type mcpOutlineResponse struct {
 	Truncated    bool              `json:"truncated"`
 }
 
+// sortedDeclarationLanguages returns the languages file_outline supports in
+// a stable order. ranker.SupportedDeclarationLanguages iterates a map, and the
+// list goes into the tool description, which should not change between runs
+// (tools/list is meant to be deterministic so clients can cache it).
+func sortedDeclarationLanguages() []string {
+	langs := ranker.SupportedDeclarationLanguages()
+	sort.Strings(langs)
+	return langs
+}
+
 func newMCPOutlineTool() mcp.Tool {
 	return mcp.NewTool("file_outline",
 		mcp.WithDescription("List the declarations in a file (functions, methods, types, classes, structs, interfaces, constants) with their line numbers, "+
 			"without the bodies. Use it on a large file before get_file, then read only the line ranges you need with start_line/end_line. "+
 			"Uses the same line-start heuristics as search's code_filter='only-declarations', so it supports: "+
-			strings.Join(ranker.SupportedDeclarationLanguages(), ", ")+"."),
+			strings.Join(sortedDeclarationLanguages(), ", ")+"."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("path", mcp.Required(), mcp.Description("File path, as for get_file.")),
@@ -379,7 +389,7 @@ func mcpOutlineHandler(cfg *Config) server.ToolHandlerFunc {
 				lang = "unknown"
 			}
 			return mcp.NewToolResultError(fmt.Sprintf("no declaration patterns for language %s; supported: %s. Use get_file instead",
-				lang, strings.Join(ranker.SupportedDeclarationLanguages(), ", "))), nil
+				lang, strings.Join(sortedDeclarationLanguages(), ", "))), nil
 		}
 
 		lines := strings.Split(string(content), "\n")

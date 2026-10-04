@@ -24,8 +24,8 @@ import (
 //
 //   - repos.csv: host, org, repo, default_branch, tags (comma-separated).
 //   - repos-meta.csv (optional): host, org, repo, description,
-//     primary_language, topics, is_archived, is_fork, plus any other columns,
-//     which are ignored.
+//     primary_language, topics (separated by ';' or ','), is_archived,
+//     is_fork, plus any other columns, which are ignored.
 //
 // Both are re-read when their modification time changes, so a long-running
 // server follows catalogue refreshes without a restart.
@@ -124,10 +124,10 @@ func readCSVByHeader(path string) ([]map[string]string, error) {
 	return rows, nil
 }
 
-// splitList splits a comma-separated cell into trimmed, non-empty values.
-func splitList(s string) []string {
+// splitList splits a cell on any of seps into trimmed, non-empty values.
+func splitList(s, seps string) []string {
 	var out []string
-	for v := range strings.SplitSeq(s, ",") {
+	for _, v := range strings.FieldsFunc(s, func(r rune) bool { return strings.ContainsRune(seps, r) }) {
 		if v = strings.TrimSpace(v); v != "" {
 			out = append(out, v)
 		}
@@ -163,12 +163,12 @@ func loadCatalogue(dir string) ([]catalogueRepo, error) {
 			Org:           row["org"],
 			Repo:          row["repo"],
 			DefaultBranch: row["default_branch"],
-			Tags:          splitList(row["tags"]),
+			Tags:          splitList(row["tags"], ","),
 		}
 		if m, ok := meta[key(row)]; ok {
 			r.Description = m["description"]
 			r.Language = m["primary_language"]
-			r.Topics = splitList(m["topics"])
+			r.Topics = splitList(m["topics"], ";,")
 			r.Archived = strings.EqualFold(m["is_archived"], "true")
 			r.Fork = strings.EqualFold(m["is_fork"], "true")
 		}
