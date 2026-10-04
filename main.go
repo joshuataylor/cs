@@ -413,10 +413,31 @@ func main() {
 		"file holding a bearer token that --mcp-http clients must send as 'Authorization: Bearer <token>'",
 	)
 	flags.StringVar(
-		&cfg.MCPCatalogueDir,
-		"mcp-catalogue",
+		&cfg.CatalogueDir,
+		"catalogue",
 		"",
-		"directory with a repository catalogue (repos.csv, optional repos-meta.csv) for a --dir laid out as <org>/<repo>; enables the list_repos MCP tool",
+		"directory with a repository catalogue (repos.csv, optional repos-meta.csv) for a --dir laid out as <org>/<repo>; enables the list_repos MCP tool and the 'tag' search parameter (web and MCP)",
+	)
+	// --mcp-catalogue was the flag's name before the web server could use it.
+	flags.StringVar(&cfg.CatalogueDir, "mcp-catalogue", "", "deprecated: use --catalogue")
+	_ = flags.MarkHidden("mcp-catalogue")
+	flags.IntVar(
+		&cfg.MaxResultFiles,
+		"max-result-files",
+		cfg.MaxResultFiles,
+		"HTTP/MCP servers: stop collecting a search after this many matching files and mark the results partial (0 = no limit)",
+	)
+	flags.IntVar(
+		&cfg.MaxResultMB,
+		"max-result-mb",
+		cfg.MaxResultMB,
+		"HTTP/MCP servers: stop collecting a search once its matching files hold this many megabytes and mark the results partial (0 = no limit)",
+	)
+	flags.IntVar(
+		&cfg.MaxConcurrentSearches,
+		"max-concurrent-searches",
+		cfg.MaxConcurrentSearches,
+		"HTTP/MCP servers: run at most this many searches at once, queueing the rest (0 = no limit)",
 	)
 	flags.BoolVarP(
 		&cfg.HttpServer,

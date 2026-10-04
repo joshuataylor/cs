@@ -26,7 +26,10 @@ import (
 // full match count was.
 type mcpSearchResponse struct {
 	SearchedDirectory string       `json:"searched_directory"`
+	Tag               string       `json:"tag,omitempty"`
+	TagRepositories   int          `json:"tag_repositories,omitempty"`
 	TotalMatches      int          `json:"total_matches"`
+	Partial           bool         `json:"partial,omitempty"`
 	ResultsReturned   int          `json:"results_returned"`
 	Offset            int          `json:"offset"`
 	NextOffset        int          `json:"next_offset"`
@@ -356,7 +359,12 @@ func newMCPServer(cfg *Config, opts ...server.ServerOption) *server.MCPServer {
 		),
 	)
 
-	mcpServer.AddTool(searchTool, mcpSearchHandler(cfg, cache))
+	var catalogue *repoCatalogue
+	if cfg.CatalogueDir != "" {
+		catalogue = newRepoCatalogue(cfg.CatalogueDir)
+		mcpTagParam(&searchTool)
+	}
+	mcpServer.AddTool(searchTool, mcpSearchHandler(cfg, cache, catalogue))
 
 	getFileTool := mcp.NewTool("get_file",
 		mcp.WithDescription("Read a file's full contents by path. Prefer this over repeated searches once a file is identified — search snippets are truncated and miss logic between matches. Use start_line/end_line for large files. Returns JSON with line-numbered 'content' and, for source files, language/complexity stats."),
@@ -380,15 +388,19 @@ func newMCPServer(cfg *Config, opts ...server.ServerOption) *server.MCPServer {
 
 	mcpServer.AddTool(getFileTool, mcpGetFileHandler(cfg))
 
-	mcpServer.AddTool(newMCPFacetsTool(), mcpFacetsHandler(cfg, cache))
+	facetsTool := newMCPFacetsTool()
+	if catalogue != nil {
+		mcpTagParam(&facetsTool)
+	}
+	mcpServer.AddTool(facetsTool, mcpFacetsHandler(cfg, cache, catalogue))
 	mcpServer.AddTool(newMCPOutlineTool(), mcpOutlineHandler(cfg))
 	mcpServer.AddTool(newMCPListDirTool(), mcpListDirHandler(cfg))
 	mcpServer.AddTool(newMCPFindFilesTool(), mcpFindFilesHandler(cfg))
 	mcpServer.AddTool(newMCPCodeStatsTool(), mcpCodeStatsHandler(cfg))
 	mcpServer.AddTool(newMCPListRefsTool(), mcpListRefsHandler(cfg))
 	mcpServer.AddTool(newMCPRelatedFilesTool(), mcpRelatedFilesHandler(cfg, cache))
-	if cfg.MCPCatalogueDir != "" {
-		mcpServer.AddTool(newMCPListReposTool(), mcpListReposHandler(cfg, newRepoCatalogue(cfg.MCPCatalogueDir)))
+	if catalogue != nil {
+		mcpServer.AddTool(newMCPListReposTool(), mcpListReposHandler(cfg, catalogue))
 	}
 
 	return mcpServer
@@ -498,6 +510,16 @@ func mcpGetFileHandler(cfg *Config) server.ToolHandlerFunc {
 	}
 }
 
+// mcpTagParam adds the "tag" parameter to a search-like tool. Only servers
+// with a catalogue (--catalogue) advertise it.
+func mcpTagParam(tool *mcp.Tool) {
+	mcp.WithString("tag",
+		mcp.Description("Search only the repositories carrying this catalogue tag (e.g. a language like 'rust', a domain like 'mcp', or a curated set), "+
+			"as one tree. Much faster than an unscoped search. Combine with 'path' to keep only the tag's repositories under that directory. "+
+			"list_repos shows which tags a repository has."),
+	)(tool)
+}
+
 // mcpSearchParams is the set of accepted parameters for the search tool, in a
 // stable order for error messages. Any argument not in this set is rejected so
 // that malformed calls (e.g. a non-existent "ext" or "dir" top-level key) fail
@@ -505,7 +527,7 @@ func mcpGetFileHandler(cfg *Config) server.ToolHandlerFunc {
 var mcpSearchParams = []string{
 	"query", "path", "max_results", "offset", "snippet_length", "case_sensitive",
 	"include_ext", "language", "path_filter", "file", "gravity", "profile", "dedup",
-	"code_filter", "snippet_mode", "line_limit", "context", "context_before", "context_after",
+	"code_filter", "snippet_mode", "line_limit", "context", "context_before", "context_after", "tag",
 }
 
 var mcpSearchParamSet = func() map[string]struct{} {
@@ -624,7 +646,7 @@ func andHintMessage(keywords []string) string {
 }
 
 // mcpSearchHandler returns an MCP tool handler that runs a code search.
-func mcpSearchHandler(cfg *Config, cache *SearchCache) server.ToolHandlerFunc {
+func mcpSearchHandler(cfg *Config, cache *SearchCache, catalogue *repoCatalogue) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query, err := request.RequireString("query")
 		if err != nil {
@@ -653,7 +675,8 @@ func mcpSearchHandler(cfg *Config, cache *SearchCache) server.ToolHandlerFunc {
 				searchRoot = s
 			}
 		}
-		resolvedRoot, explicitRoot, rootErr := resolveSearchRoot(cfg, searchRoot)
+		tag, _ := request.GetArguments()["tag"].(string)
+		resolvedRoot, explicitRoot, tagRoots, rootErr := resolveSearchScope(cfg, catalogue, searchRoot, tag)
 		if rootErr != nil {
 			return mcp.NewToolResultError(rootErr.Error()), nil
 		}
@@ -678,6 +701,7 @@ func mcpSearchHandler(cfg *Config, cache *SearchCache) server.ToolHandlerFunc {
 		// Copy config so we can override per-request without mutating the shared config
 		searchCfg := *cfg
 		searchCfg.Directory = resolvedRoot
+		searchCfg.SearchRoots = tagRoots
 		if explicitRoot {
 			// The caller named this directory, so walk it literally rather than
 			// letting --find-root climb out to the enclosing repository root.
@@ -781,16 +805,20 @@ func mcpSearchHandler(cfg *Config, cache *SearchCache) server.ToolHandlerFunc {
 			}
 		}
 
-		// Run search
-		ch, stats, searchErr := DoSearch(ctx, &searchCfg, query, cache)
+		// Run search: wait for a slot, and stop collecting once the result
+		// budget is spent rather than holding every match in memory.
+		release, slotErr := acquireSearchSlot(ctx, cfg)
+		if slotErr != nil {
+			return mcp.NewToolResultError(slotErr.Error()), nil
+		}
+		defer release()
+		searchCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		ch, stats, searchErr := DoSearch(searchCtx, &searchCfg, query, cache)
 		if searchErr != nil {
 			return mcp.NewToolResultError(searchErr.Error()), nil
 		}
-
-		var results []*common.FileJob
-		for fj := range ch {
-			results = append(results, fj)
-		}
+		results, partial := collectResults(&searchCfg, ch, cancel)
 
 		// Rank results
 		textFileCount := int(stats.TextFileCount.Load())
@@ -835,6 +863,9 @@ func mcpSearchHandler(cfg *Config, cache *SearchCache) server.ToolHandlerFunc {
 		// Build response envelope with pagination metadata
 		response := mcpSearchResponse{
 			SearchedDirectory: resolvedRoot,
+			Tag:               strings.TrimSpace(tag),
+			TagRepositories:   len(tagRoots),
+			Partial:           partial,
 			TotalMatches:      totalMatches,
 			ResultsReturned:   len(jsonResults),
 			Offset:            offset,
@@ -859,6 +890,9 @@ func mcpSearchHandler(cfg *Config, cache *SearchCache) server.ToolHandlerFunc {
 				"Showing results %d\u2013%d of %d. Pass offset=%d for the next page.",
 				startResult, endResult, totalMatches, nextOffset,
 			)
+		}
+		if partial {
+			response.Message = strings.TrimSpace(budgetMessage(&searchCfg, len(results)) + " " + response.Message)
 		} else if totalMatches == 0 {
 			// Explain the most common cause of a surprising empty result: a
 			// multi-word query whose terms are all ANDed. Only fires for pure

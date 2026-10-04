@@ -312,6 +312,21 @@ cs -d --template-style light
 cs -d --template-display ./asset/templates/display.tmpl --template-search ./asset/templates/search.tmpl
 ```
 
+The search page and its JSON form (`/?q=...&format=json`) take two scope parameters, also shown as fields next to the search box:
+
+- `dir`: the directory to search, relative to `--dir` (e.g. `dir=org/repo`). The server has no authentication, so it can never point outside `--dir`. It sets where the walk starts, unlike an in-query `path:` filter, which still walks the whole tree.
+- `tag`: with `--catalogue DIR`, search only the repositories carrying that tag in the catalogue (`DIR/repos.csv`), walked together.
+
+#### Server limits
+
+A search holds every matching file in memory until it is ranked, so on a large tree a query matching a common word (or a half-typed one in the live search box) can need a lot of it. The HTTP and MCP servers therefore:
+
+- stop a search when its client disconnects;
+- run at most `--max-concurrent-searches` (default 4) at once and queue the rest;
+- stop collecting a search after `--max-result-files` (default 10000) matching files or `--max-result-mb` (default 512) of matched content, and mark the results partial (`partial` and `message` in the JSON, a note on the page). Results and ranking then cover only the files collected; narrow with `dir`, `tag` or more specific terms.
+
+`0` turns a limit off. A partial search is never stored in the prefix cache, so a later query extending it still sees every file.
+
 ### Default operator
 
 Adjacent terms with no explicit `AND`/`OR` between them are combined with the
@@ -389,64 +404,67 @@ Usage:
   cs [flags]
 
 Flags:
-      --address string               address and port to listen on (default ":8080")
-  -A, --after-context int            lines of context after each match (grep mode)
-  -B, --before-context int           lines of context before each match (grep mode)
-      --binary                       set to disable binary file detection and search binary files
-  -c, --case-sensitive               make the search case sensitive
-      --color string                 color output mode [auto, always, never] (default "auto")
-  -C, --context int                  lines of context before and after each match (grep mode)
-      --cpu-profile string           write CPU profile to file (for use with go tool pprof or PGO)
-      --dedup                        collapse byte-identical search matches, keeping the highest-scored representative
-      --default-operator string      how to combine adjacent terms with no explicit AND/OR [and, or]. 'or' is useful for broad multi-keyword searches (default "and")
-      --dir string                   directory to search, if not set defaults to current working directory
-      --exclude-dir strings          directories to exclude (default [.git,.hg,.svn])
-  -x, --exclude-pattern strings      file and directory locations matching case sensitive patterns will be ignored [comma separated list: e.g. vendor,_test.go]
-  -r, --find-root                    attempts to find the root of this repository by traversing in reverse looking for .git or .hg
-  -f, --format string                set output format [text, json, vimgrep] (default "text")
-      --git-sync                     periodically git pull repositories found in the search directory (TUI/HTTP/MCP only)
-      --git-sync-interval duration   interval between git sync pulls (e.g. 5m, 30s, 1h) (default 5m0s)
-      --git-sync-workers int         number of concurrent git pull workers (default 1)
-      --gravity string               complexity gravity intent: brain (2.5), logic (1.5), default (1.0), low (0.2), off (0.0) (default "default")
-  -h, --help                         help for cs
-      --hidden                       include hidden files
-  -d, --http-server                  start the HTTP server
-  -i, --include-ext strings          limit to file extensions (N.B. case sensitive) [comma separated list: e.g. go,java,js,C,cpp]
-      --line-limit int               max matching lines per file in grep mode (-1 = unlimited) (default -1)
-      --max-read-size-bytes int      number of bytes to read into a file with the remaining content ignored (default 1000000)
-      --mcp                          start as an MCP (Model Context Protocol) server over stdio
-      --mcp-catalogue string         directory with a repository catalogue (repos.csv, optional repos-meta.csv) for a --dir laid out as <org>/<repo>; enables the list_repos MCP tool
-      --mcp-http string              start as an MCP server over Streamable HTTP on this address (e.g. 127.0.0.1:24134), serving /mcp; a non-loopback address requires --mcp-lock-dir or --mcp-http-token-file
-      --mcp-http-token-file string   file holding a bearer token that --mcp-http clients must send as 'Authorization: Bearer <token>'
-      --mcp-lock-dir                 restrict the MCP server to --dir: reject searching or reading outside that tree
-      --min                          include minified files
-      --min-line-length int          number of bytes per average line for file to be considered minified (default 255)
-      --no-gitignore                 disables .gitignore file logic
-      --no-ignore                    disables .ignore file logic
-      --no-syntax                    disable syntax highlighting in output
-      --noise string                 noise penalty intent: silence (0.1), quiet (0.5), default (1.0), loud (2.0), raw (off) (default "default")
-      --only-code                    only rank matches in code (auto-selects structural ranker)
-      --only-comments                only rank matches in comments (auto-selects structural ranker)
-      --only-declarations            only show matches on declaration lines (func, type, var, const, class, def, etc.)
-      --only-strings                 only rank matches in string literals (auto-selects structural ranker)
-      --only-usages                  only show matches on usage lines (excludes declarations)
-  -o, --output string                output filename (default stdout)
-      --profile string               ranking profile [balanced, precise, broad] — overrides --gravity, --noise, and --test-penalty when set
-      --ranker string                set ranking algorithm [simple, tfidf, bm25, structural] (default "structural")
-      --result-limit int             maximum number of results to return (-1 for unlimited) (default -1)
-      --reverse                      reverse the result order
-  -s, --snippet-count int            number of snippets to display (default 1)
-  -n, --snippet-length int           size of the snippet to display (default 300)
-      --snippet-mode string          snippet extraction mode: auto, snippet, lines, or grep (default "auto")
-      --template-display string      path to a custom display template
-      --template-search string       path to a custom search template
-      --template-style string        built-in theme for the HTTP server UI [dark, light, bare] (default "dark")
-      --test-penalty float           score multiplier for test files when query has no test intent (0.0-1.0, 1.0=disabled) (default 0.4)
-  -t, --type strings                 limit to language types [comma separated list: e.g. Go,Java,Python]
-  -v, --version                      version for cs
-      --weight-code float            structural ranker: weight for matches in code (default 1.0) (default 1)
-      --weight-comment float         structural ranker: weight for matches in comments (default 0.2) (default 0.2)
-      --weight-string float          structural ranker: weight for matches in strings (default 0.5) (default 0.5)
+      --address string                address and port to listen on (default ":8080")
+  -A, --after-context int             lines of context after each match (grep mode)
+  -B, --before-context int            lines of context before each match (grep mode)
+      --binary                        set to disable binary file detection and search binary files
+  -c, --case-sensitive                make the search case sensitive
+      --catalogue string              directory with a repository catalogue (repos.csv, optional repos-meta.csv) for a --dir laid out as <org>/<repo>; enables the list_repos MCP tool and the 'tag' search parameter (web and MCP)
+      --color string                  color output mode [auto, always, never] (default "auto")
+  -C, --context int                   lines of context before and after each match (grep mode)
+      --cpu-profile string            write CPU profile to file (for use with go tool pprof or PGO)
+      --dedup                         collapse byte-identical search matches, keeping the highest-scored representative
+      --default-operator string       how to combine adjacent terms with no explicit AND/OR [and, or]. 'or' is useful for broad multi-keyword searches (default "and")
+      --dir string                    directory to search, if not set defaults to current working directory
+      --exclude-dir strings           directories to exclude (default [.git,.hg,.svn])
+  -x, --exclude-pattern strings       file and directory locations matching case sensitive patterns will be ignored [comma separated list: e.g. vendor,_test.go]
+  -r, --find-root                     attempts to find the root of this repository by traversing in reverse looking for .git or .hg
+  -f, --format string                 set output format [text, json, vimgrep] (default "text")
+      --git-sync                      periodically git pull repositories found in the search directory (TUI/HTTP/MCP only)
+      --git-sync-interval duration    interval between git sync pulls (e.g. 5m, 30s, 1h) (default 5m0s)
+      --git-sync-workers int          number of concurrent git pull workers (default 1)
+      --gravity string                complexity gravity intent: brain (2.5), logic (1.5), default (1.0), low (0.2), off (0.0) (default "default")
+  -h, --help                          help for cs
+      --hidden                        include hidden files
+  -d, --http-server                   start the HTTP server
+  -i, --include-ext strings           limit to file extensions (N.B. case sensitive) [comma separated list: e.g. go,java,js,C,cpp]
+      --line-limit int                max matching lines per file in grep mode (-1 = unlimited) (default -1)
+      --max-concurrent-searches int   HTTP/MCP servers: run at most this many searches at once, queueing the rest (0 = no limit) (default 4)
+      --max-read-size-bytes int       number of bytes to read into a file with the remaining content ignored (default 1000000)
+      --max-result-files int          HTTP/MCP servers: stop collecting a search after this many matching files and mark the results partial (0 = no limit) (default 10000)
+      --max-result-mb int             HTTP/MCP servers: stop collecting a search once its matching files hold this many megabytes and mark the results partial (0 = no limit) (default 512)
+      --mcp                           start as an MCP (Model Context Protocol) server over stdio
+      --mcp-http string               start as an MCP server over Streamable HTTP on this address (e.g. 127.0.0.1:24134), serving /mcp; a non-loopback address requires --mcp-lock-dir or --mcp-http-token-file
+      --mcp-http-token-file string    file holding a bearer token that --mcp-http clients must send as 'Authorization: Bearer <token>'
+      --mcp-lock-dir                  restrict the MCP server to --dir: reject searching or reading outside that tree
+      --min                           include minified files
+      --min-line-length int           number of bytes per average line for file to be considered minified (default 255)
+      --no-gitignore                  disables .gitignore file logic
+      --no-ignore                     disables .ignore file logic
+      --no-syntax                     disable syntax highlighting in output
+      --noise string                  noise penalty intent: silence (0.1), quiet (0.5), default (1.0), loud (2.0), raw (off) (default "default")
+      --only-code                     only rank matches in code (auto-selects structural ranker)
+      --only-comments                 only rank matches in comments (auto-selects structural ranker)
+      --only-declarations             only show matches on declaration lines (func, type, var, const, class, def, etc.)
+      --only-strings                  only rank matches in string literals (auto-selects structural ranker)
+      --only-usages                   only show matches on usage lines (excludes declarations)
+  -o, --output string                 output filename (default stdout)
+      --profile string                ranking profile [balanced, precise, broad] — overrides --gravity, --noise, and --test-penalty when set
+      --ranker string                 set ranking algorithm [simple, tfidf, bm25, structural] (default "structural")
+      --result-limit int              maximum number of results to return (-1 for unlimited) (default -1)
+      --reverse                       reverse the result order
+  -s, --snippet-count int             number of snippets to display (default 1)
+  -n, --snippet-length int            size of the snippet to display (default 300)
+      --snippet-mode string           snippet extraction mode: auto, snippet, lines, or grep (default "auto")
+      --template-display string       path to a custom display template
+      --template-search string        path to a custom search template
+      --template-style string         built-in theme for the HTTP server UI [dark, light, bare] (default "dark")
+      --test-penalty float            score multiplier for test files when query has no test intent (0.0-1.0, 1.0=disabled) (default 0.4)
+  -t, --type strings                  limit to language types [comma separated list: e.g. Go,Java,Python]
+  -v, --version                       version for cs
+      --weight-code float             structural ranker: weight for matches in code (default 1.0) (default 1)
+      --weight-comment float          structural ranker: weight for matches in comments (default 0.2) (default 0.2)
+      --weight-string float           structural ranker: weight for matches in strings (default 0.5) (default 0.5)
 ```
 
 Searches work on single or multiple words with a logical AND applied between them. You can negate with NOT before a term.
@@ -590,6 +608,7 @@ The MCP server exposes `search` and `get_file`, plus tools for finding your way 
 | `file` | string | no | Restrict to files whose filename matches (substring or glob; comma-separated values are ORed). ANDed against the whole query |
 | `gravity` | string | no | Complexity gravity intent: `brain`, `logic`, `default`, `low`, `off`                             |
 | `profile` | string | no | Ranking profile: `balanced` (default), `precise`, `broad` - overrides gravity/noise/test-penalty |
+| `tag` | string | no | Only with `--catalogue`: search only the repositories carrying this catalogue tag, as one tree (also on `search_facets`) |
 
 Note that `path` selects **where** to search and `path_filter` narrows **what** matches — passing a glob to
 `path` is an error that points you at `path_filter`.
@@ -623,7 +642,7 @@ Returns JSON with line-numbered file content and, for recognised source files, l
 | `code_stats` | `path`, `top` | scc totals per language and the most complex files, for a directory or one file |
 | `list_refs` | `path`, `kind` (`tags`, `branches`, `all`), `limit` | A git repository's tags and branches, newest first, and its HEAD; feeds `rev` |
 | `related_files` | `path` (required), `scope`, `limit` | Files sharing at least two of the file's most distinctive identifiers (its tests, callers, siblings), BM25-ranked, with the terms used |
-| `list_repos` | `query`, `org`, `tag`, `language`, `include_archived`, `limit` | Only with `--mcp-catalogue DIR`: repositories from a catalogue (`DIR/repos.csv`, optional `DIR/repos-meta.csv`) of a `--dir` laid out as `<org>/<repo>`, with their paths, descriptions, tags and whether they are on disk |
+| `list_repos` | `query`, `org`, `tag`, `language`, `include_archived`, `limit` | Only with `--catalogue DIR`: repositories from a catalogue (`DIR/repos.csv`, optional `DIR/repos-meta.csv`) of a `--dir` laid out as `<org>/<repo>`, with their paths, descriptions, tags and whether they are on disk |
 
 ### Support
 

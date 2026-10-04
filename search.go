@@ -91,6 +91,19 @@ func DoSearch(ctx context.Context, cfg *Config, query string, cache *SearchCache
 	// and the walker still functions with the original relative path.
 	dir, _ = filepath.Abs(dir)
 
+	// SearchRoots walks several directories (e.g. the repositories carrying a
+	// catalogue tag) as one tree. The prefix cache is keyed by a single root, so
+	// it is not used for them.
+	roots := []string{dir}
+	if len(cfg.SearchRoots) > 0 {
+		roots = make([]string, 0, len(cfg.SearchRoots))
+		for _, r := range cfg.SearchRoots {
+			abs, _ := filepath.Abs(r)
+			roots = append(roots, abs)
+		}
+		cache = nil
+	}
+
 	fileQueue := make(chan *gocodewalker.File, 1000)
 
 	// Try cache hit path: feed cached file locations instead of walking
@@ -117,7 +130,7 @@ func DoSearch(ctx context.Context, cfg *Config, query string, cache *SearchCache
 
 	// Set up file walker (cache miss or no cache)
 	{
-		walker := gocodewalker.NewParallelFileWalker([]string{dir}, fileQueue)
+		walker := gocodewalker.NewParallelFileWalker(roots, fileQueue)
 		walker.AllowListExtensions = cfg.AllowListExtensions
 		walker.IgnoreIgnoreFile = cfg.IgnoreIgnoreFile
 		walker.IgnoreGitIgnore = cfg.IgnoreGitIgnore
@@ -295,8 +308,11 @@ startWorkers:
 		close(out)
 		close(searchDone)
 
-		// Populate cache with matched file locations
-		if cache != nil && len(matchedLocations) > 0 {
+		// Populate cache with matched file locations, but only from a search that
+		// ran to completion: a cancelled one (client gone, result budget spent)
+		// saw only part of the tree, and caching that would make later queries
+		// extending this one silently miss files.
+		if cache != nil && len(matchedLocations) > 0 && ctx.Err() == nil {
 			cache.Store(dir, cfg.AllowListExtensions, cacheQuery, matchedLocations)
 		}
 	}()

@@ -34,6 +34,11 @@ type httpSearch struct {
 	ExtensionFacet      []httpFacetResult  `json:"extensionFacet,omitempty"`
 	Pages               []httpPageResult   `json:"pages,omitempty"`
 	Ext                 string             `json:"ext,omitempty"`
+	Dir                 string             `json:"dir,omitempty"`
+	Tag                 string             `json:"tag,omitempty"`
+	TagRepositories     int                `json:"tagRepositories,omitempty"`
+	Partial             bool               `json:"partial,omitempty"`
+	Message             string             `json:"message,omitempty"`
 	Ranker              string             `json:"ranker"`
 	CodeFilter          string             `json:"codeFilter"`
 	Gravity             string             `json:"gravity"`
@@ -83,6 +88,8 @@ type httpFacetResult struct {
 	Count       int    `json:"count"`
 	SearchTerm  string `json:"searchTerm"`
 	SnippetSize int    `json:"snippetSize"`
+	Dir         string `json:"dir,omitempty"`
+	Tag         string `json:"tag,omitempty"`
 	Ranker      string `json:"ranker"`
 	CodeFilter  string `json:"codeFilter"`
 	Gravity     string `json:"gravity"`
@@ -96,6 +103,8 @@ type httpPageResult struct {
 	Value       int    `json:"value"`
 	Name        string `json:"name"`
 	Ext         string `json:"ext,omitempty"`
+	Dir         string `json:"dir,omitempty"`
+	Tag         string `json:"tag,omitempty"`
 	Ranker      string `json:"ranker"`
 	CodeFilter  string `json:"codeFilter"`
 	Gravity     string `json:"gravity"`
@@ -212,7 +221,112 @@ func StartHttpServer(cfg *Config) {
 		}
 	})
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	var catalogue *repoCatalogue
+	if cfg.CatalogueDir != "" {
+		catalogue = newRepoCatalogue(cfg.CatalogueDir)
+	}
+	http.HandleFunc("/", httpSearchHandler(cfg, cache, searchTmpl, catalogue))
+
+	fmt.Printf("starting HTTP server on %s\n", cfg.Address)
+	log.Fatal(http.ListenAndServe(cfg.Address, nil))
+}
+
+func httpCalculateExtensionFacet(extensionFacets map[string]int, query string, snippetLength int, rankerParam, codeFilter, gravityParam, noiseParam, snippetModeParam, dir, tag string) []httpFacetResult {
+	var ef []httpFacetResult
+
+	for k, v := range extensionFacets {
+		ef = append(ef, httpFacetResult{
+			Title:       k,
+			Count:       v,
+			SearchTerm:  query,
+			SnippetSize: snippetLength,
+			Dir:         dir,
+			Tag:         tag,
+			Ranker:      rankerParam,
+			CodeFilter:  codeFilter,
+			Gravity:     gravityParam,
+			Noise:       noiseParam,
+			SnippetMode: snippetModeParam,
+		})
+	}
+
+	sort.Slice(ef, func(i, j int) bool {
+		if ef[i].Count == ef[j].Count {
+			return strings.Compare(ef[i].Title, ef[j].Title) < 0
+		}
+		return ef[i].Count > ef[j].Count
+	})
+
+	return ef
+}
+
+func httpCalculatePages(results []*common.FileJob, pageSize int, query string, snippetLength int, ext string, rankerParam, codeFilter, gravityParam, noiseParam, snippetModeParam, dir, tag string) []httpPageResult {
+	var pages []httpPageResult
+
+	if len(results) == 0 {
+		return pages
+	}
+
+	if len(results) <= pageSize {
+		pages = append(pages, httpPageResult{
+			SearchTerm:  query,
+			SnippetSize: snippetLength,
+			Dir:         dir,
+			Tag:         tag,
+			Value:       0,
+			Name:        "1",
+			Ranker:      rankerParam,
+			CodeFilter:  codeFilter,
+			Gravity:     gravityParam,
+			Noise:       noiseParam,
+			SnippetMode: snippetModeParam,
+		})
+		return pages
+	}
+
+	a := 1
+	if len(results)%pageSize == 0 {
+		a = 0
+	}
+
+	for i := 0; i < len(results)/pageSize+a; i++ {
+		pages = append(pages, httpPageResult{
+			SearchTerm:  query,
+			SnippetSize: snippetLength,
+			Dir:         dir,
+			Tag:         tag,
+			Value:       i,
+			Name:        strconv.Itoa(i + 1),
+			Ext:         ext,
+			Ranker:      rankerParam,
+			CodeFilter:  codeFilter,
+			Gravity:     gravityParam,
+			Noise:       noiseParam,
+			SnippetMode: snippetModeParam,
+		})
+	}
+	return pages
+}
+
+func tryParseInt(x string, def int) int {
+	t, err := strconv.Atoi(x)
+	if err != nil {
+		return def
+	}
+	return t
+}
+
+func makeTimestampMilli() int64 {
+	return time.Now().UnixNano() / int64(time.Millisecond)
+}
+
+// httpSearchHandler serves the search page and its JSON form (format=json).
+// dir sets the directory to search (relative to --dir, never outside it) and
+// tag, with --catalogue, searches only that tag's repositories. Searches stop
+// when the client disconnects, wait for a slot under --max-concurrent-searches,
+// and stop collecting at the --max-result-files / --max-result-mb budget.
+func httpSearchHandler(cfg *Config, cache *SearchCache, searchTmpl *template.Template, catalogue *repoCatalogue) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		startTime := makeTimestampMilli()
 		query := r.URL.Query().Get("q")
 		snippetLength := tryParseInt(r.URL.Query().Get("ss"), 300)
@@ -251,10 +365,28 @@ func StartHttpServer(cfg *Config) {
 
 		var results []*common.FileJob
 		var processedFileCount int64
+		dirParam := strings.TrimSpace(r.URL.Query().Get("dir"))
+		tagParam := strings.TrimSpace(r.URL.Query().Get("tag"))
+		var message string
+		var partial bool
 
-		if query != "" {
+		// The web server has no authentication, so dir is always confined to
+		// --dir, whatever --mcp-lock-dir says.
+		scopeCfg := *cfg
+		scopeCfg.MCPLockDir = true
+		searchRoot, explicitRoot, tagRoots, scopeErr := resolveSearchScope(&scopeCfg, catalogue, dirParam, tagParam)
+		if scopeErr != nil {
+			message = scopeErr.Error()
+		}
+
+		if query != "" && scopeErr == nil {
 			// Make a copy of config so we can adjust per request
 			searchCfg := *cfg
+			searchCfg.Directory = searchRoot
+			searchCfg.SearchRoots = tagRoots
+			if explicitRoot {
+				searchCfg.FindRoot = false
+			}
 			if len(ext) != 0 {
 				searchCfg.AllowListExtensions = []string{ext}
 			} else {
@@ -290,31 +422,27 @@ func StartHttpServer(cfg *Config) {
 				rankerParam = "structural"
 			}
 
-			ctx := context.Background()
-			ch, stats, searchErr := DoSearch(ctx, &searchCfg, query, cache)
-			if searchErr != nil {
-				err := searchTmpl.Execute(w, httpSearch{
-					SearchTerm:  query,
-					SnippetSize: snippetLength,
-					Ranker:      rankerParam,
-					CodeFilter:  codeFilter,
-					Gravity:     gravityParam,
-					Noise:       noiseParam,
-					SnippetMode: snippetModeParam,
-				})
-				if err != nil {
-					log.Printf("template execute error: %v", err)
+			// The request's context, so a search stops when its client goes away
+			// instead of running (and holding its results) to the end regardless.
+			if release, slotErr := acquireSearchSlot(r.Context(), cfg); slotErr != nil {
+				message = slotErr.Error()
+			} else {
+				searchCtx, cancel := context.WithCancel(r.Context())
+				ch, stats, searchErr := DoSearch(searchCtx, &searchCfg, query, cache)
+				if searchErr != nil {
+					message = searchErr.Error()
+				} else {
+					results, partial = collectResults(&searchCfg, ch, cancel)
+					processedFileCount = stats.TextFileCount.Load()
+					testIntent := ranker.HasTestIntent(strings.Fields(query))
+					results = ranker.RankResults(searchCfg.Ranker, int(processedFileCount), results, searchCfg.StructuralRankerConfig(), searchCfg.ResolveRankingProfile(), testIntent)
+					if partial {
+						message = budgetMessage(&searchCfg, len(results))
+					}
 				}
-				return
+				cancel()
+				release()
 			}
-
-			for fj := range ch {
-				results = append(results, fj)
-			}
-
-			processedFileCount = stats.TextFileCount.Load()
-			testIntent := ranker.HasTestIntent(strings.Fields(query))
-			results = ranker.RankResults(searchCfg.Ranker, int(processedFileCount), results, searchCfg.StructuralRankerConfig(), searchCfg.ResolveRankingProfile(), testIntent)
 		}
 
 		// Dedup (before pagination, so freed slots get backfilled)
@@ -329,7 +457,7 @@ func StartHttpServer(cfg *Config) {
 
 		// if we have more than the page size of results, lets just show the first page
 		displayResults := results
-		pages := httpCalculatePages(results, pageSize, query, snippetLength, ext, rankerParam, codeFilter, gravityParam, noiseParam, snippetModeParam)
+		pages := httpCalculatePages(results, pageSize, query, snippetLength, ext, rankerParam, codeFilter, gravityParam, noiseParam, snippetModeParam, dirParam, tagParam)
 
 		if displayResults != nil && len(displayResults) > pageSize {
 			displayResults = displayResults[:pageSize]
@@ -521,9 +649,14 @@ func StartHttpServer(cfg *Config) {
 			ResultsCount:        len(results),
 			RuntimeMilliseconds: makeTimestampMilli() - startTime,
 			ProcessedFileCount:  processedFileCount,
-			ExtensionFacet:      httpCalculateExtensionFacet(extensionFacets, query, snippetLength, rankerParam, codeFilter, gravityParam, noiseParam, snippetModeParam),
+			ExtensionFacet:      httpCalculateExtensionFacet(extensionFacets, query, snippetLength, rankerParam, codeFilter, gravityParam, noiseParam, snippetModeParam, dirParam, tagParam),
 			Pages:               pages,
 			Ext:                 ext,
+			Dir:                 dirParam,
+			Tag:                 tagParam,
+			TagRepositories:     len(tagRoots),
+			Partial:             partial,
+			Message:             message,
 			Ranker:              rankerParam,
 			CodeFilter:          codeFilter,
 			Gravity:             gravityParam,
@@ -543,91 +676,5 @@ func StartHttpServer(cfg *Config) {
 		if err != nil {
 			log.Printf("template execute error: %v", err)
 		}
-	})
-
-	fmt.Printf("starting HTTP server on %s\n", cfg.Address)
-	log.Fatal(http.ListenAndServe(cfg.Address, nil))
-}
-
-func httpCalculateExtensionFacet(extensionFacets map[string]int, query string, snippetLength int, rankerParam, codeFilter, gravityParam, noiseParam, snippetModeParam string) []httpFacetResult {
-	var ef []httpFacetResult
-
-	for k, v := range extensionFacets {
-		ef = append(ef, httpFacetResult{
-			Title:       k,
-			Count:       v,
-			SearchTerm:  query,
-			SnippetSize: snippetLength,
-			Ranker:      rankerParam,
-			CodeFilter:  codeFilter,
-			Gravity:     gravityParam,
-			Noise:       noiseParam,
-			SnippetMode: snippetModeParam,
-		})
 	}
-
-	sort.Slice(ef, func(i, j int) bool {
-		if ef[i].Count == ef[j].Count {
-			return strings.Compare(ef[i].Title, ef[j].Title) < 0
-		}
-		return ef[i].Count > ef[j].Count
-	})
-
-	return ef
-}
-
-func httpCalculatePages(results []*common.FileJob, pageSize int, query string, snippetLength int, ext string, rankerParam, codeFilter, gravityParam, noiseParam, snippetModeParam string) []httpPageResult {
-	var pages []httpPageResult
-
-	if len(results) == 0 {
-		return pages
-	}
-
-	if len(results) <= pageSize {
-		pages = append(pages, httpPageResult{
-			SearchTerm:  query,
-			SnippetSize: snippetLength,
-			Value:       0,
-			Name:        "1",
-			Ranker:      rankerParam,
-			CodeFilter:  codeFilter,
-			Gravity:     gravityParam,
-			Noise:       noiseParam,
-			SnippetMode: snippetModeParam,
-		})
-		return pages
-	}
-
-	a := 1
-	if len(results)%pageSize == 0 {
-		a = 0
-	}
-
-	for i := 0; i < len(results)/pageSize+a; i++ {
-		pages = append(pages, httpPageResult{
-			SearchTerm:  query,
-			SnippetSize: snippetLength,
-			Value:       i,
-			Name:        strconv.Itoa(i + 1),
-			Ext:         ext,
-			Ranker:      rankerParam,
-			CodeFilter:  codeFilter,
-			Gravity:     gravityParam,
-			Noise:       noiseParam,
-			SnippetMode: snippetModeParam,
-		})
-	}
-	return pages
-}
-
-func tryParseInt(x string, def int) int {
-	t, err := strconv.Atoi(x)
-	if err != nil {
-		return def
-	}
-	return t
-}
-
-func makeTimestampMilli() int64 {
-	return time.Now().UnixNano() / int64(time.Millisecond)
 }

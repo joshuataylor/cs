@@ -171,7 +171,7 @@ func mcpJSONResult(v any) (*mcp.CallToolResult, error) {
 
 // search_facets
 
-var mcpFacetsParams = []string{"query", "path", "path_filter", "file", "include_ext", "language", "case_sensitive", "depth", "limit"}
+var mcpFacetsParams = []string{"query", "path", "path_filter", "file", "include_ext", "language", "case_sensitive", "depth", "limit", "tag"}
 
 type mcpFacet struct {
 	Name    string `json:"name"`
@@ -211,7 +211,7 @@ func newMCPFacetsTool() mcp.Tool {
 	)
 }
 
-func mcpFacetsHandler(cfg *Config, cache *SearchCache) server.ToolHandlerFunc {
+func mcpFacetsHandler(cfg *Config, cache *SearchCache, catalogue *repoCatalogue) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := request.GetArguments()
 		if res := mcpRejectUnknownArgs("search_facets", args, mcpFacetsParams); res != nil {
@@ -221,7 +221,7 @@ func mcpFacetsHandler(cfg *Config, cache *SearchCache) server.ToolHandlerFunc {
 		if query == "" {
 			return mcp.NewToolResultError("missing required parameter: query"), nil
 		}
-		root, explicit, err := resolveSearchRoot(cfg, mcpStringArg(args, "path"))
+		root, explicit, tagRoots, err := resolveSearchScope(cfg, catalogue, mcpStringArg(args, "path"), mcpStringArg(args, "tag"))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -230,6 +230,7 @@ func mcpFacetsHandler(cfg *Config, cache *SearchCache) server.ToolHandlerFunc {
 
 		searchCfg := *cfg
 		searchCfg.Directory = root
+		searchCfg.SearchRoots = tagRoots
 		if explicit {
 			searchCfg.FindRoot = false
 		}
@@ -244,6 +245,13 @@ func mcpFacetsHandler(cfg *Config, cache *SearchCache) server.ToolHandlerFunc {
 		}
 		searchCfg.CaseSensitive = mcpBoolArg(args, "case_sensitive", searchCfg.CaseSensitive)
 
+		release, slotErr := acquireSearchSlot(ctx, cfg)
+		if slotErr != nil {
+			return mcp.NewToolResultError(slotErr.Error()), nil
+		}
+		defer release()
+		// Facets count each match and drop it, so unlike search they need no
+		// result budget.
 		composed := composeSearchQuery(query, mcpStringArg(args, "path_filter"), mcpStringArg(args, "file"))
 		ch, _, searchErr := DoSearch(ctx, &searchCfg, composed, cache)
 		if searchErr != nil {
@@ -566,6 +574,11 @@ func mcpFindFilesHandler(cfg *Config) server.ToolHandlerFunc {
 		}
 		limit := mcpIntArg(args, "limit", 100, 1, 1000)
 
+		release, slotErr := acquireSearchSlot(ctx, cfg)
+		if slotErr != nil {
+			return mcp.NewToolResultError(slotErr.Error()), nil
+		}
+		defer release()
 		resp := mcpFindFilesResponse{SearchedDirectory: root, Pattern: pattern, Files: []string{}}
 		mcpWalkFiles(ctx, cfg, root, func(f *gocodewalker.File) bool {
 			if !match(f.Filename) {
@@ -667,6 +680,12 @@ func mcpCodeStatsHandler(cfg *Config) server.ToolHandlerFunc {
 			}
 			root = dir
 		}
+
+		release, slotErr := acquireSearchSlot(ctx, cfg)
+		if slotErr != nil {
+			return mcp.NewToolResultError(slotErr.Error()), nil
+		}
+		defer release()
 
 		type fileStats struct {
 			path, lang                              string

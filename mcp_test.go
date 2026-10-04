@@ -95,7 +95,7 @@ func TestBuildJSONResultsLineMode(t *testing.T) {
 func TestMCPSearchHandlerMissingQuery(t *testing.T) {
 	cfg := DefaultConfig()
 	cache := NewSearchCache()
-	handler := mcpSearchHandler(&cfg, cache)
+	handler := mcpSearchHandler(&cfg, cache, nil)
 
 	// No query argument
 	req := mcp.CallToolRequest{}
@@ -111,7 +111,7 @@ func TestMCPSearchHandlerMissingQuery(t *testing.T) {
 func TestMCPSearchHandlerEmptyQuery(t *testing.T) {
 	cfg := DefaultConfig()
 	cache := NewSearchCache()
-	handler := mcpSearchHandler(&cfg, cache)
+	handler := mcpSearchHandler(&cfg, cache, nil)
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -130,7 +130,7 @@ func TestMCPSearchHandlerReturnsJSON(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory = t.TempDir()
 	cache := NewSearchCache()
-	handler := mcpSearchHandler(&cfg, cache)
+	handler := mcpSearchHandler(&cfg, cache, nil)
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -179,7 +179,7 @@ func TestMCPSearchHandlerTruncation(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory = dir
 	cache := NewSearchCache()
-	handler := mcpSearchHandler(&cfg, cache)
+	handler := mcpSearchHandler(&cfg, cache, nil)
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -237,7 +237,7 @@ func TestMCPSearchHandlerNoTruncation(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory = dir
 	cache := NewSearchCache()
-	handler := mcpSearchHandler(&cfg, cache)
+	handler := mcpSearchHandler(&cfg, cache, nil)
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -278,7 +278,7 @@ func TestMCPSearchHandlerRejectsUnknownParam(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory = t.TempDir()
 	cache := NewSearchCache()
-	handler := mcpSearchHandler(&cfg, cache)
+	handler := mcpSearchHandler(&cfg, cache, nil)
 
 	// Reproduces the reported bug: caller passes non-existent top-level
 	// "path" and "ext" keys. These must be rejected, not silently dropped.
@@ -308,7 +308,7 @@ func TestMCPSearchHandlerAcceptsKnownParams(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory = t.TempDir()
 	cache := NewSearchCache()
-	handler := mcpSearchHandler(&cfg, cache)
+	handler := mcpSearchHandler(&cfg, cache, nil)
 
 	// "path_filter" is a valid top-level param — this must not be rejected.
 	req := mcp.CallToolRequest{}
@@ -343,7 +343,7 @@ func TestMCPSearchHandlerTopLevelPathScopesGlobally(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory = dir
 	cache := NewSearchCache()
-	handler := mcpSearchHandler(&cfg, cache)
+	handler := mcpSearchHandler(&cfg, cache, nil)
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -425,7 +425,7 @@ func TestMCPSearchHandlerEmptyResultAndHint(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory = t.TempDir() // empty dir → guaranteed zero matches
 	cache := NewSearchCache()
-	handler := mcpSearchHandler(&cfg, cache)
+	handler := mcpSearchHandler(&cfg, cache, nil)
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -457,7 +457,7 @@ func TestMCPSearchHandlerEmptyResultNoHintForSingleTerm(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory = t.TempDir()
 	cache := NewSearchCache()
-	handler := mcpSearchHandler(&cfg, cache)
+	handler := mcpSearchHandler(&cfg, cache, nil)
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
@@ -777,7 +777,7 @@ func searchWith(t *testing.T, cfg *Config, args map[string]any) mcpSearchRespons
 	t.Helper()
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = args
-	result, err := mcpSearchHandler(cfg, NewSearchCache())(context.Background(), req)
+	result, err := mcpSearchHandler(cfg, NewSearchCache(), nil)(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -796,7 +796,7 @@ func searchErrorText(t *testing.T, cfg *Config, args map[string]any) string {
 	t.Helper()
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = args
-	result, err := mcpSearchHandler(cfg, NewSearchCache())(context.Background(), req)
+	result, err := mcpSearchHandler(cfg, NewSearchCache(), nil)(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

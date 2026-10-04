@@ -130,6 +130,8 @@
 		<form id="search-form" method="get" action="/">
 			<div class="search-row">
 				<input id="search-input" type="text" name="q" value="{{ .SearchTerm }}" autofocus="autofocus" onfocus="this.select()" placeholder="Search..." />
+				<input id="search-dir" type="text" name="dir" value="{{ .Dir }}" placeholder="dir" title="Directory to search, relative to the server's root (e.g. org/repo)" style="width:12em" />
+				<input id="search-tag" type="text" name="tag" value="{{ .Tag }}" placeholder="tag" title="Search only the repositories with this catalogue tag" style="width:8em" />
 				<input type="submit" value="Search" />
 			</div>
 			<select name="rk" onchange="this.form.submit()">
@@ -168,6 +170,7 @@
 				<option value="grep" {{ if eq .SnippetMode "grep" }}selected{{ end }}>snippet: grep</option>
 			</select>
 			<span id="search-stats" class="stats">[{{ .ResultsCount }} results from {{ .ProcessedFileCount }} files in {{ .RuntimeMilliseconds }} ms]</span>
+			<div id="search-message" class="stats" style="color:#d9822b">{{ .Message }}</div>
 		</form>
 
 		<div id="results-container" class="results-layout">
@@ -188,7 +191,7 @@
 
 				<div class="pages">
 				{{- range .Pages }}
-					<a href="/?q={{ .SearchTerm }}&ss={{ .SnippetSize }}&p={{ .Value }}&ext={{ .Ext }}&rk={{ .Ranker }}&cf={{ .CodeFilter }}&gv={{ .Gravity }}&ns={{ .Noise }}&sm={{ .SnippetMode }}">{{ .Name }}</a>
+					<a href="/?q={{ .SearchTerm }}&ss={{ .SnippetSize }}&p={{ .Value }}&ext={{ .Ext }}&dir={{ .Dir }}&tag={{ .Tag }}&rk={{ .Ranker }}&cf={{ .CodeFilter }}&gv={{ .Gravity }}&ns={{ .Noise }}&sm={{ .SnippetMode }}">{{ .Name }}</a>
 				{{- end }}
 				</div>
 			</div>
@@ -198,7 +201,7 @@
 				<div class="sidebar-heading">Extensions</div>
 				<ul class="facet-list">
 				{{- range .ExtensionFacet }}
-					<li><a href="/?q={{ .SearchTerm }}&ss={{ .SnippetSize }}&ext={{ .Title }}&rk={{ .Ranker }}&cf={{ .CodeFilter }}&gv={{ .Gravity }}&ns={{ .Noise }}&sm={{ .SnippetMode }}">{{ .Title }}</a> <span class="facet-count">({{ .Count }})</span></li>
+					<li><a href="/?q={{ .SearchTerm }}&ss={{ .SnippetSize }}&ext={{ .Title }}&dir={{ .Dir }}&tag={{ .Tag }}&rk={{ .Ranker }}&cf={{ .CodeFilter }}&gv={{ .Gravity }}&ns={{ .Noise }}&sm={{ .SnippetMode }}">{{ .Title }}</a> <span class="facet-count">({{ .Count }})</span></li>
 				{{- end }}
 				</ul>
 			</div>
@@ -227,7 +230,9 @@
 		var gv = form.querySelector('select[name="gv"]').value;
 		var ns = form.querySelector('select[name="ns"]').value;
 		var sm = form.querySelector('select[name="sm"]').value;
-		return 'rk=' + encodeURIComponent(rk) + '&cf=' + encodeURIComponent(cf) + '&gv=' + encodeURIComponent(gv) + '&ns=' + encodeURIComponent(ns) + '&sm=' + encodeURIComponent(sm);
+		var dir = form.querySelector('input[name="dir"]').value;
+		var tag = form.querySelector('input[name="tag"]').value;
+		return 'rk=' + encodeURIComponent(rk) + '&cf=' + encodeURIComponent(cf) + '&gv=' + encodeURIComponent(gv) + '&ns=' + encodeURIComponent(ns) + '&sm=' + encodeURIComponent(sm) + '&dir=' + encodeURIComponent(dir) + '&tag=' + encodeURIComponent(tag);
 	}
 
 	function doSearch() {
@@ -250,6 +255,7 @@
 
 		fetch(url, { signal: controller.signal }).then(function(r) { return r.json(); }).then(function(data) {
 			stats.textContent = '[' + data.resultsCount + ' results from ' + data.processedFileCount + ' files in ' + data.runtimeMilliseconds + ' ms]';
+			document.getElementById('search-message').textContent = data.message || '';
 			renderResults(data);
 		}).catch(function(e) {
 			if (e.name !== 'AbortError') stats.textContent = '[error]';
@@ -292,7 +298,7 @@
 			if (data.pages) {
 				for (var i = 0; i < data.pages.length; i++) {
 					var p = data.pages[i];
-					html += '<a href="/?q=' + encodeURIComponent(p.searchTerm) + '&ss=' + p.snippetSize + '&p=' + p.value + '&ext=' + encodeURIComponent(p.ext || '') + '&rk=' + encodeURIComponent(p.ranker) + '&cf=' + encodeURIComponent(p.codeFilter) + '&gv=' + encodeURIComponent(p.gravity) + '&ns=' + encodeURIComponent(p.noise) + '&sm=' + encodeURIComponent(p.snippetMode || '') + '">' + escapeHTML(p.name) + '</a>';
+					html += '<a href="/?q=' + encodeURIComponent(p.searchTerm) + '&ss=' + p.snippetSize + '&p=' + p.value + '&ext=' + encodeURIComponent(p.ext || '') + '&dir=' + encodeURIComponent(p.dir || '') + '&tag=' + encodeURIComponent(p.tag || '') + '&rk=' + encodeURIComponent(p.ranker) + '&cf=' + encodeURIComponent(p.codeFilter) + '&gv=' + encodeURIComponent(p.gravity) + '&ns=' + encodeURIComponent(p.noise) + '&sm=' + encodeURIComponent(p.snippetMode || '') + '">' + escapeHTML(p.name) + '</a>';
 				}
 			}
 			html += '</div></div>';
@@ -301,7 +307,7 @@
 			html += '<div class="results-sidebar"><div class="sidebar-heading">Extensions</div><ul class="facet-list">';
 			for (var i = 0; i < data.extensionFacet.length; i++) {
 				var f = data.extensionFacet[i];
-				html += '<li><a href="/?q=' + encodeURIComponent(f.searchTerm) + '&ss=' + f.snippetSize + '&ext=' + encodeURIComponent(f.title) + '&rk=' + encodeURIComponent(f.ranker) + '&cf=' + encodeURIComponent(f.codeFilter) + '&gv=' + encodeURIComponent(f.gravity) + '&ns=' + encodeURIComponent(f.noise) + '&sm=' + encodeURIComponent(f.snippetMode || '') + '">' + escapeHTML(f.title) + '</a> <span class="facet-count">(' + f.count + ')</span></li>';
+				html += '<li><a href="/?q=' + encodeURIComponent(f.searchTerm) + '&ss=' + f.snippetSize + '&ext=' + encodeURIComponent(f.title) + '&dir=' + encodeURIComponent(f.dir || '') + '&tag=' + encodeURIComponent(f.tag || '') + '&rk=' + encodeURIComponent(f.ranker) + '&cf=' + encodeURIComponent(f.codeFilter) + '&gv=' + encodeURIComponent(f.gravity) + '&ns=' + encodeURIComponent(f.noise) + '&sm=' + encodeURIComponent(f.snippetMode || '') + '">' + escapeHTML(f.title) + '</a> <span class="facet-count">(' + f.count + ')</span></li>';
 			}
 			html += '</ul></div>';
 		}

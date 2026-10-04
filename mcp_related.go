@@ -185,14 +185,22 @@ func mcpRelatedFilesHandler(cfg *Config, cache *SearchCache) server.ToolHandlerF
 		searchCfg.MaxQueryChars = common.MaxQueryCharsMCP
 		searchCfg.MaxQueryTerms = common.MaxQueryTermsMCP
 		query := strings.Join(terms, " OR ")
-		ch, stats, searchErr := DoSearch(ctx, &searchCfg, query, cache)
+		release, slotErr := acquireSearchSlot(ctx, cfg)
+		if slotErr != nil {
+			return mcp.NewToolResultError(slotErr.Error()), nil
+		}
+		defer release()
+		searchCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		ch, stats, searchErr := DoSearch(searchCtx, &searchCfg, query, cache)
 		if searchErr != nil {
 			return mcp.NewToolResultError(searchErr.Error()), nil
 		}
+		collected, partial := collectResults(&searchCfg, ch, cancel)
 
 		// One shared identifier is usually a coincidence; ask for two.
 		var results []*common.FileJob
-		for fj := range ch {
+		for _, fj := range collected {
 			if fj.Location == abs || len(fj.MatchLocations) < 2 {
 				continue
 			}
@@ -217,6 +225,9 @@ func mcpRelatedFilesHandler(cfg *Config, cache *SearchCache) server.ToolHandlerF
 		}
 		if len(resp.Results) == 0 {
 			resp.Message = fmt.Sprintf("No other file in %s shares two or more of these identifiers.", root)
+		}
+		if partial {
+			resp.Message = strings.TrimSpace(budgetMessage(&searchCfg, len(collected)) + " " + resp.Message)
 		}
 		return mcpJSONResult(resp)
 	}

@@ -65,7 +65,8 @@ See `pkg/search/README.md` for detailed query syntax documentation.
 - **`mcp_tools.go`**: navigation tools shared by both MCP transports: `search_facets` (match counts by directory/language/extension), `file_outline` (declarations via `pkg/ranker` heuristics), `list_dir`, `find_files`, `code_stats` (scc per language)
 - **`mcp_git.go`**: git-backed reads: `get_file`/`file_outline` `rev` (`git cat-file blob rev:path`, revs validated so they can't be read as options) and `list_refs`
 - **`mcp_related.go`**: `related_files`, which searches for a file's most distinctive identifiers and ranks the results with BM25
-- **`mcp_catalogue.go`**: `list_repos` over a `repos.csv`/`repos-meta.csv` catalogue (`--mcp-catalogue`), reloaded when the files change
+- **`mcp_catalogue.go`**: `list_repos` and the `tag` search parameter (web and MCP) over a `repos.csv`/`repos-meta.csv` catalogue (`--catalogue`), reloaded when the files change
+- **`search_budget.go`**: server-side search limits shared by the web and MCP servers: `collectResults()` stops a search at `--max-result-files`/`--max-result-mb` and marks it partial, and a gate runs at most `--max-concurrent-searches` at once
 - **`mcp_log.go`**: one `slog` line per tool call in `--mcp-http` mode
 - **`templates.go`**: Template loading with `//go:embed` for built-in HTML templates; supports custom template paths
 

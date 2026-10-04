@@ -307,6 +307,57 @@ func mcpListReposHandler(cfg *Config, catalogue *repoCatalogue) server.ToolHandl
 	}
 }
 
+// tagRoots returns the directories of the catalogue's repositories that
+// carry tag and exist on disk under base, keeping only those inside within
+// when it is set. It is what the "tag" search parameter walks.
+func (c *repoCatalogue) tagRoots(base, within, tag string) ([]string, error) {
+	repos, err := c.get()
+	if err != nil {
+		return nil, err
+	}
+	var roots []string
+	for _, r := range repos {
+		if !containsFold(r.Tags, tag) {
+			continue
+		}
+		dir := filepath.Join(base, r.Org, r.Repo)
+		if within != "" && !withinRoot(within, dir) {
+			continue
+		}
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			roots = append(roots, dir)
+		}
+	}
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("no repositories with tag %q on disk under %s", tag, base)
+	}
+	sort.Strings(roots)
+	return roots, nil
+}
+
+// resolveSearchScope turns a search's directory and tag arguments into where
+// to walk: root is the directory (as resolveSearchRoot), and roots, set only
+// for a tag, are that tag's repositories inside root.
+func resolveSearchScope(cfg *Config, catalogue *repoCatalogue, dir, tag string) (root string, explicit bool, roots []string, err error) {
+	root, explicit, err = resolveSearchRoot(cfg, dir)
+	if err != nil || strings.TrimSpace(tag) == "" {
+		return root, explicit, nil, err
+	}
+	if catalogue == nil {
+		return "", false, nil, fmt.Errorf("tag needs a repository catalogue, and this server was started without --catalogue")
+	}
+	base, err := defaultSearchRoot(cfg)
+	if err != nil {
+		return "", false, nil, err
+	}
+	within := ""
+	if explicit {
+		within = root
+	}
+	roots, err = catalogue.tagRoots(base, within, strings.TrimSpace(tag))
+	return root, explicit, roots, err
+}
+
 func containsFold(list []string, want string) bool {
 	for _, v := range list {
 		if strings.EqualFold(v, want) {

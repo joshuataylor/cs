@@ -102,10 +102,25 @@ type Config struct {
 	// every --mcp-http request must present as "Authorization: Bearer <token>".
 	MCPHTTPTokenFile string
 
-	// MCPCatalogueDir, when set, is a directory holding a repository catalogue
+	// CatalogueDir, when set, is a directory holding a repository catalogue
 	// (repos.csv, optionally repos-meta.csv) for a tree laid out as
-	// <dir>/<org>/<repo>; it enables the list_repos MCP tool.
-	MCPCatalogueDir string
+	// <dir>/<org>/<repo>. It enables the list_repos MCP tool and the "tag"
+	// search parameter (web and MCP), which searches only that tag's repos.
+	CatalogueDir string
+
+	// SearchRoots, when set, are walked instead of Directory: several
+	// repositories searched as one tree (the "tag" parameter fills it).
+	SearchRoots []string
+
+	// Server search limits, for the HTTP and MCP servers. A search holds every
+	// matching file (and a per-byte type map of it) until it is ranked, so a
+	// query matching a large share of a big tree can exhaust memory; past
+	// MaxResultFiles files or MaxResultMB megabytes the search stops and the
+	// results say they are partial. MaxConcurrentSearches queues further
+	// searches. Zero means no limit.
+	MaxResultFiles        int
+	MaxResultMB           int
+	MaxConcurrentSearches int
 
 	// HTTP
 	Address         string
@@ -145,6 +160,9 @@ func DefaultConfig() Config {
 		Format:                 "text",
 		Address:                ":8080",
 		TemplateStyle:          "dark",
+		MaxResultFiles:         10000,
+		MaxResultMB:            512,
+		MaxConcurrentSearches:  4,
 	}
 }
 

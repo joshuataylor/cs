@@ -115,7 +115,7 @@ func decodeTool[T any](t *testing.T, text string) T {
 
 func TestSearchFacets(t *testing.T) {
 	root := writeToolFixture(t)
-	h := mcpFacetsHandler(toolConfig(root), NewSearchCache())
+	h := mcpFacetsHandler(toolConfig(root), NewSearchCache(), nil)
 
 	resp := decodeTool[mcpFacetsResponse](t, callTool(t, h, map[string]any{"query": "WidgetRegistry"}, false))
 	if resp.TotalFiles != 3 {
@@ -397,7 +397,7 @@ func TestListRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := toolConfig(root)
-	cfg.MCPCatalogueDir = catDir
+	cfg.CatalogueDir = catDir
 	h := mcpListReposHandler(cfg, newRepoCatalogue(catDir))
 
 	byQuery := decodeTool[mcpListReposResponse](t, callTool(t, h, map[string]any{"query": "widget"}, false))
@@ -447,7 +447,7 @@ func TestValidateMCPFlagsCatalogue(t *testing.T) {
 	writeCatalogue(t, catDir, "\"host\",\"org\",\"repo\",\"default_branch\",\"tags\"\n")
 
 	cfg := DefaultConfig()
-	cfg.MCPCatalogueDir = catDir
+	cfg.CatalogueDir = catDir
 	if err := validateMCPFlags(&cfg); err == nil || !strings.Contains(err.Error(), "requires --mcp") {
 		t.Errorf("catalogue without an MCP mode: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestValidateMCPFlagsCatalogue(t *testing.T) {
 	if err := validateMCPFlags(&cfg); err != nil {
 		t.Errorf("catalogue with --mcp: %v", err)
 	}
-	cfg.MCPCatalogueDir = t.TempDir()
+	cfg.CatalogueDir = t.TempDir()
 	if err := validateMCPFlags(&cfg); err == nil {
 		t.Error("catalogue dir without repos.csv accepted")
 	}
@@ -508,7 +508,7 @@ func TestNewMCPServerTools(t *testing.T) {
 
 	catDir := t.TempDir()
 	writeCatalogue(t, catDir, "\"host\",\"org\",\"repo\",\"default_branch\",\"tags\"\n")
-	cfg.MCPCatalogueDir = catDir
+	cfg.CatalogueDir = catDir
 	if _, ok := list(cfg)["list_repos"]; !ok {
 		t.Error("list_repos missing with --mcp-catalogue")
 	}
